@@ -1,0 +1,232 @@
+/* Chat webview styling shared by all three hosts. VS Code injects
+ * --vscode-* variables into the webview root; every use carries a fallback
+ * so the same sheet renders sensibly in JBCef and the Chrome side panel
+ * (dark-leaning defaults, readable in light hosts too via the vars). */
+
+:root {
+  --vd-fg: var(--vscode-foreground, #d4d4d4);
+  --vd-bg: var(--vscode-editor-background, #1e1e1e);
+  --vd-muted: var(--vscode-descriptionForeground, #9d9d9d);
+  --vd-border: var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  --vd-input-bg: var(--vscode-input-background, #2a2a2a);
+  --vd-input-fg: var(--vscode-input-foreground, #d4d4d4);
+  --vd-accent: var(--vscode-button-background, #0e639c);
+  --vd-accent-fg: var(--vscode-button-foreground, #ffffff);
+  --vd-accent-hover: var(--vscode-button-hoverBackground, #1177bb);
+  --vd-bubble-user: var(--vscode-input-background, #2a2a2a);
+  --vd-bubble-assistant: var(--vscode-editorWidget-background, #252526);
+  --vd-error: var(--vscode-errorForeground, #f48771);
+  --vd-font: var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --vd-font-size: var(--vscode-font-size, 13px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--vd-font);
+  font-size: var(--vd-font-size);
+  color: var(--vd-fg);
+  background: var(--vd-bg);
+  overflow: hidden;
+}
+
+/* --- auth bar ------------------------------------------------------------ */
+
+.auth-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vd-border);
+  flex: none;
+}
+
+.auth-user {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-hint {
+  color: var(--vd-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- toolbar ------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vd-border);
+  flex: none;
+}
+
+.toolbar select {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  color: var(--vscode-dropdown-foreground, var(--vd-input-fg));
+  background: var(--vscode-dropdown-background, var(--vd-input-bg));
+  border: 1px solid var(--vscode-dropdown-border, var(--vd-border));
+  border-radius: 3px;
+}
+
+/* --- engine chip (subtle) ------------------------------------------------ */
+
+.engine-chip {
+  flex: none;
+  max-width: 40%;
+  padding: 2px 8px;
+  font-size: 0.85em;
+  color: var(--vd-muted);
+  border: 1px solid var(--vd-border);
+  border-radius: 999px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engine-chip:empty {
+  display: none;
+}
+
+.engine-ready {
+  color: var(--vscode-charts-green, #6a9955);
+  border-color: currentColor;
+}
+
+.engine-loading {
+  color: var(--vscode-charts-yellow, #cca700);
+  border-color: currentColor;
+}
+
+/* --- messages ------------------------------------------------------------ */
+
+.messages {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msg {
+  display: flex;
+}
+
+.msg-user {
+  justify-content: flex-end;
+}
+
+.msg-body {
+  max-width: 92%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+.msg-user .msg-body {
+  background: var(--vd-bubble-user);
+  border: 1px solid var(--vd-border);
+}
+
+.msg-assistant .msg-body {
+  background: var(--vd-bubble-assistant);
+  border: 1px solid var(--vd-border);
+}
+
+.msg-system .msg-body {
+  max-width: 100%;
+  width: 100%;
+  color: var(--vd-muted);
+  font-size: 0.9em;
+  background: transparent;
+  border: 1px dashed var(--vd-border);
+}
+
+/* --- composer (pinned bottom) -------------------------------------------- */
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--vd-border);
+  flex: none;
+}
+
+.composer textarea {
+  flex: 1 1 0;
+  min-width: 0;
+  resize: none;
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--vd-input-fg);
+  background: var(--vd-input-bg);
+  border: 1px solid var(--vscode-input-border, var(--vd-border));
+  border-radius: 4px;
+}
+
+.composer textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder, var(--vd-accent));
+  outline-offset: -1px;
+}
+
+.composer textarea:disabled {
+  opacity: 0.5;
+}
+
+/* --- buttons ------------------------------------------------------------- */
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-primary {
+  padding: 5px 12px;
+  color: var(--vd-accent-fg);
+  background: var(--vd-accent);
+  border: none;
+}
+
+.btn-primary:not(:disabled):hover {
+  background: var(--vd-accent-hover);
+}
+
+.btn-ghost {
+  padding: 3px 8px;
+  color: var(--vd-fg);
+  background: transparent;
+  border: 1px solid var(--vd-border);
+}
+
+.btn-ghost:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}

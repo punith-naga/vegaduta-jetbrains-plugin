@@ -1,0 +1,8 @@
+VegaDuta for JetBrains IDEs
+Copyright 2026 VegaDuta
+
+This product includes software developed at VegaDuta (https://vegaduta.ai).
+
+The chat webview bundle statically links @mlc-ai/web-llm
+(https://github.com/mlc-ai/web-llm), Copyright MLC-AI, licensed under the
+Apache License, Version 2.0.

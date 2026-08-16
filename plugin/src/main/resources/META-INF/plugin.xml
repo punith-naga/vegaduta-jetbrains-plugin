@@ -1,0 +1,53 @@
+<idea-plugin>
+    <id>ai.vegaduta.ide</id>
+    <name>VegaDuta</name>
+    <vendor url="https://vegaduta.ai">VegaDuta</vendor>
+    <description><![CDATA[
+        Chat with your VegaDuta tenant agents, run workflows, and send code
+        selections for explanation or refactoring - right from the IDE.
+        Sign in via the OAuth device flow (no ports, works over Remote/SSH),
+        or paste a scoped <code>vmcp_</code> API key for headless use.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="VegaDuta"
+                    anchor="right"
+                    factoryClass="ai.vegaduta.ide.toolwindow.ChatToolWindowFactory"
+                    icon="AllIcons.Toolwindows.WebToolWindow"/>
+        <applicationConfigurable parentId="tools"
+                                 id="ai.vegaduta.ide.settings"
+                                 displayName="VegaDuta"
+                                 instance="ai.vegaduta.ide.settings.VegadutaConfigurable"/>
+        <notificationGroup id="VegaDuta" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="VegaDuta.EditorPopup" text="VegaDuta" popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="VegaDuta.ExplainSelection"
+                    class="ai.vegaduta.ide.actions.ExplainSelectionAction"
+                    text="Explain Selection"
+                    description="Send the selected code to a VegaDuta agent for explanation"/>
+            <action id="VegaDuta.RefactorSelection"
+                    class="ai.vegaduta.ide.actions.RefactorSelectionAction"
+                    text="Refactor Selection"
+                    description="Ask a VegaDuta agent to refactor the selected code"/>
+        </group>
+        <group id="VegaDuta.ToolsMenu" text="VegaDuta" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="VegaDuta.SignIn"
+                    class="ai.vegaduta.ide.actions.SignInAction"
+                    text="Sign In…"
+                    description="Sign in to VegaDuta with the OAuth device flow"/>
+            <action id="VegaDuta.RunWorkflow"
+                    class="ai.vegaduta.ide.actions.RunWorkflowAction"
+                    text="Run Workflow…"
+                    description="Pick a VegaDuta workflow, run it, and watch progress"/>
+            <separator/>
+            <reference ref="VegaDuta.ExplainSelection"/>
+            <reference ref="VegaDuta.RefactorSelection"/>
+        </group>
+    </actions>
+</idea-plugin>

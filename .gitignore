@@ -1,0 +1,9 @@
+# Belt-and-braces on top of plugin/.gitignore and shared/.gitignore.
+node_modules/
+dist/
+build/
+.gradle/
+.intellijPlatform/
+.kotlin/
+.idea/
+*.zip

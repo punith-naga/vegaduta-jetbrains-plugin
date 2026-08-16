@@ -1,0 +1,6 @@
+.gradle/
+build/
+.intellijPlatform/
+.idea/
+# Build-time copy of clients/shared/dist/webview (see copyWebview in build.gradle.kts)
+src/main/resources/webview/

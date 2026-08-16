@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VegaDūta</title>
+  <!-- Hosts rewrite these relative URIs to their own scheme (VS Code
+       asWebviewUri, JBCef resource handler, Chrome extension URL) and may
+       inject a CSP meta tag; keep this file free of absolute paths. -->
+  <link rel="stylesheet" href="chat.css" />
+</head>
+<!-- No data-manual-boot: chat.js auto-boots via detectTransport(). Chrome's
+     side panel uses its own page that imports bootChatApp() instead. -->
+<body>
+  <header id="auth-bar" class="auth-bar"></header>
+  <div class="toolbar">
+    <select id="agent-select" title="Agent"></select>
+    <select id="workflow-select" title="Run a workflow"></select>
+    <span id="engine-chip" class="engine-chip engine-unavailable"></span>
+  </div>
+  <main id="messages" class="messages" aria-live="polite"></main>
+  <footer class="composer">
+    <textarea id="composer-input" rows="2" placeholder="Ask your agent…" disabled></textarea>
+    <button id="composer-run" class="btn-ghost" title="Run the first fenced code block (```) in a disposable sandbox">Run</button>
+    <button id="composer-send" class="btn-primary" disabled>Send</button>
+  </footer>
+  <script type="module" src="chat.js"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+* text=auto eol=lf
+# The Gradle wrapper must keep LF or it breaks on Linux/macOS.
+plugin/gradlew text eol=lf
+plugin/gradlew.bat text eol=crlf
+*.jar binary

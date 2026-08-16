@@ -1,0 +1,20 @@
+{
+  "name": "@vegaduta/clients-shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared core for the VegaDuta IDE/browser plugins: API client, SSE reader, OIDC device-flow auth, host<->webview protocol, chat webview bundle, and the on-device (WebLLM/Ollama) engine layer. Not published - clients/vscode and clients/chrome import ../shared/src by relative path and bundle it themselves; clients/jetbrains consumes only the built webview bundle (dist/webview).",
+  "type": "module",
+  "scripts": {
+    "build:webview": "node scripts/build-webview.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mlc-ai/web-llm": "0.2.84"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
