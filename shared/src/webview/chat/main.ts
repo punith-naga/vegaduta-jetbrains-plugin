@@ -108,6 +108,7 @@ import {
   privacyEnforcementLabel,
   routeFor,
   canReleaseParked,
+  friendlyModelName,
   pickQuickModel,
   secondOpinionAvailable,
   wantsTheAnswer,
@@ -1100,6 +1101,52 @@ function formatSize(bytes: number): string {
   return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
 }
 
+/** "Start here": the one-click first step at the top of a model list - the
+ * lightest model, named plainly, with its size - so nobody has to decode a
+ * list of model ids to get going. */
+function renderStartHere(name: string, sizeBytes: number, run: () => void): HTMLElement {
+  const box = el("div", "vd-start-here");
+  const text = el("div", "vd-start-here-text");
+  text.append(
+    el("strong", undefined, "New here? Start with the lightest model"),
+    el("span", undefined, `${name} · ${formatSize(sizeBytes)} · the quickest download. You can add bigger, smarter models below any time.`)
+  );
+  const go = el("button", "btn-primary");
+  go.type = "button";
+  go.append(icon("bolt"), el("span", undefined, `Download ${name}`));
+  go.addEventListener("click", run);
+  box.append(text, go);
+  return box;
+}
+
+/** Bottom of every model list: how to go bigger, in plain steps - what the
+ * larger models need, and how to run the strongest ones with Ollama, which
+ * VegaDūta then finds by itself. */
+function renderMorePowerful(inPanelBiggest?: string): HTMLElement {
+  const box = el("details", "vd-more-power");
+  box.append(el("summary", undefined, "Want a more powerful model?"));
+  const steps = el("ol", "vd-more-power-steps");
+  const li = (html: Array<string | HTMLElement>) => {
+    const item = el("li");
+    for (const part of html) item.append(typeof part === "string" ? document.createTextNode(part) : part);
+    steps.append(item);
+  };
+  const code = (t: string) => el("code", "md-code-inline", t);
+  li([
+    "Bigger models answer better but need more memory: about ",
+    el("strong", undefined, "8 GB RAM"),
+    " for 3B models, ",
+    el("strong", undefined, "16 GB"),
+    " for 7B.",
+    ...(inPanelBiggest ? [` The biggest one here is ${inPanelBiggest} - download it above.`] : []),
+  ]);
+  li(["For the strongest models, install the free ", el("strong", undefined, "Ollama"), " app from ollama.com."]);
+  li(["In a terminal, pull one - for code: ", code("ollama pull qwen2.5-coder:14b"), " (about 9 GB, 32 GB RAM) or ", code("ollama pull qwen2.5-coder:7b"), " (about 5 GB)."]);
+  li(["Leave Ollama running. VegaDūta finds it by itself and uses it for chat - no settings needed" + (state.platform === "jetbrains" ? " (or use Settings > Tools > VegaDuta > Detect local server)." : ".")]);
+  box.append(steps);
+  return box;
+}
+
 /** The IDE hosts' model panel: one click downloads (checksum-verified) and
  * runs a model with the bundled llama.cpp runtime, entirely on this machine. */
 function renderRuntimePanel(panel: HTMLElement): void {
@@ -1126,6 +1173,10 @@ function renderRuntimePanel(panel: HTMLElement): void {
     return;
   }
   if (rt.state === "error") panel.append(el("p", "vd-notice vd-notice-error", rt.detail ?? "Something went wrong."));
+  if (rt.state !== "running" && !rt.models.some((m) => m.installed)) {
+    const first = [...rt.models].sort((a, b) => a.sizeBytes - b.sizeBytes)[0];
+    if (first) panel.append(renderStartHere(first.displayName.replace(/ - .*$/, ""), first.sizeBytes, () => runtimeInstall(first.id)));
+  }
   if (rt.state === "running") {
     panel.append(el("p", "engine-panel-note", `Running ${rt.modelId ?? "a model"} on this computer.`));
   }
@@ -1147,13 +1198,17 @@ function renderRuntimePanel(panel: HTMLElement): void {
       actions.append(el("span", "engine-model-active", "Running"), button("Stop", "btn-ghost", () => transport.post({ type: "runtime.stop" })));
     } else {
       actions.append(
-        button(m.installed ? "Run" : `Download & run`, m.recommended || m.installed ? "btn-primary" : "btn-ghost", () => runtimeInstall(m.id))
+        // Only a downloaded model's Run is primary: the "start here" block
+        // above owns the first-download call to action.
+        button(m.installed ? "Run" : `Download & run`, m.installed ? "btn-primary" : "btn-ghost", () => runtimeInstall(m.id))
       );
     }
     row.append(info, actions);
     list.append(row);
   }
   panel.append(list);
+  const biggest = [...rt.models].sort((a, b) => b.sizeBytes - a.sizeBytes)[0];
+  panel.append(renderMorePowerful(biggest ? biggest.displayName.replace(/ - .*$/, "") : undefined));
 }
 
 function renderModels(): void {
@@ -1180,19 +1235,26 @@ function renderModels(): void {
   }
 
   if (!models.webgpu) {
-    panel.append(
-      el(
-        "p",
-        "engine-panel-note",
-        "This host has no WebGPU, so in-browser models cannot run here. " +
-          "A local server you run yourself (Ollama, LM Studio, llama.cpp) still works: " +
-          (state.engine.state === "ready"
-            ? `connected to ${state.engine.backend ?? "it"} now.`
-            : state.engine.detail
-              ? `currently ${state.engine.detail}.`
-              : "start one and reopen this panel.")
-      )
-    );
+    if (state.engine.state === "ready") {
+      panel.append(
+        el("p", "engine-panel-note", `Connected to your local model server (${state.engine.backend ?? "local"}) - answers run on this computer.`)
+      );
+    } else {
+      // Not "cannot run": the in-window engine needs WebGPU, which this
+      // editor/browser does not offer here - so say what DOES work, in steps.
+      const box = el("div", "vd-start-here");
+      const text = el("div", "vd-start-here-text");
+      text.append(
+        el("strong", undefined, "Get free on-device AI in 3 steps"),
+        el(
+          "span",
+          undefined,
+          "This window can't run models by itself (no WebGPU here), so use a free local model app - VegaDūta connects to it automatically."
+        )
+      );
+      box.append(text, button("Show me how", "btn-primary", () => showOnDeviceSetup()));
+      panel.append(box);
+    }
   } else {
     panel.append(
       el(
@@ -1203,6 +1265,10 @@ function renderModels(): void {
       )
     );
   }
+
+  // Nothing downloaded yet: one obvious first step before the full list.
+  const lightest = models.webgpu && !models.models.some((m) => m.downloaded) ? pickQuickModel(models.models) : undefined;
+  if (lightest) panel.append(renderStartHere(friendlyModelName(lightest.id), lightest.sizeBytes, () => void startDownload(lightest)));
 
   panel.append(renderMachineCheck(models));
 
@@ -1232,13 +1298,20 @@ function renderModels(): void {
   panel.append(prefRow);
 
   const list = el("ul", "engine-models");
-  for (const m of models.models) {
+  // Downloaded first (ready to use), then lightest first - the list reads
+  // from "quickest to try" to "biggest".
+  const ordered = [...models.models].sort(
+    (a, b) => Number(b.downloaded) - Number(a.downloaded) || a.sizeBytes - b.sizeBytes
+  );
+  for (const m of ordered) {
     list.append(renderModelRow(m, models.webgpu));
   }
   if (models.models.length === 0) {
     list.append(el("li", "engine-panel-note", "No models are listed for this platform."));
   }
   panel.append(list);
+  const biggest = [...models.models].filter((m) => m.fits).sort((a, b) => b.sizeBytes - a.sizeBytes)[0];
+  panel.append(renderMorePowerful(models.webgpu && biggest ? friendlyModelName(biggest.id) : undefined));
 }
 
 function renderModelRow(m: WebLlmModelInfo, webgpu: boolean): HTMLElement {
@@ -1250,7 +1323,7 @@ function renderModelRow(m: WebLlmModelInfo, webgpu: boolean): HTMLElement {
   if (m.contextWindowSize) metaParts.push(`${m.contextWindowSize} ctx`);
   if (m.recommended && !m.downloaded) metaParts.push("recommended");
   if (m.downloaded) metaParts.push("downloaded");
-  if (webgpu && !m.fits) metaParts.push("may not fit this device");
+  if (webgpu && !m.fits) metaParts.push("needs more memory than this device reports - try a lighter one");
   info.append(el("div", "engine-model-meta", metaParts.join(" · ")));
   if (m.detailName) info.append(el("div", "engine-model-detail", m.detailName));
   row.append(info);
@@ -1298,7 +1371,7 @@ function renderModelRow(m: WebLlmModelInfo, webgpu: boolean): HTMLElement {
   } else {
     const dl = button(
       webgpu ? `Download ${formatBytes(m.sizeBytes)}` : "Needs WebGPU",
-      m.recommended ? "btn-primary" : "btn-ghost",
+      "btn-ghost",
       () => void startDownload(m)
     );
     dl.disabled = !webgpu || state.downloadingId !== null;
@@ -2087,17 +2160,23 @@ function renderEngineCard(): HTMLElement | null {
         "span",
         undefined,
         rtPick
-          ? `${rtPick.displayName} · ${formatSize(rtPick.sizeBytes)} once · private · no account`
+          ? `${rtPick.displayName} - downloads once, then works offline · private · no account`
           : pick
-            ? `${shortModelName(pick.id)}${pick.sizeBytes ? ` · ${formatBytes(pick.sizeBytes)} once` : ""} · private · no account`
+            ? `${friendlyModelName(pick.id)} - downloads once, then works offline · private · no account`
             : "Private, no account, nothing leaves your machine"
       )
     );
     const go = el("button", "btn-primary");
     go.type = "button";
-    go.append(icon("bolt"), el("span", undefined, (rtPick ? rtPick.installed : pick?.downloaded) ? "Use it" : "Get it"));
+    const ready = rtPick ? rtPick.installed : pick?.downloaded;
+    const size = rtPick ? rtPick.sizeBytes : pick?.sizeBytes;
+    go.append(
+      icon(ready ? "play" : "bolt"),
+      el("span", undefined, ready ? "Start it" : `Download lightest${size ? ` · ${formatSize(size)}` : ""}`)
+    );
+    go.title = "One click: downloads once, checks it, then runs it on this computer. Bigger, smarter models are under Choose a model.";
     go.addEventListener("click", () => void quickLocalModel());
-    actions.append(go, button("Choose", "btn-ghost", () => void toggleModels(true)));
+    actions.append(go, button("Choose a model", "btn-ghost", () => void toggleModels(true)));
     if (!state.models && engineHost) {
       void engineHost.listModels().then((list) => {
         state.models = list;
@@ -2581,10 +2660,13 @@ function renderToolRunner(panel: HTMLElement, tool: InstantTool): void {
         button("Ask AI about this", "btn-ghost", () => {
           const fence = "```";
           const c = composerInput();
-          c.value = `About this ${tool.name} result:\n${fence}${result.language ?? ""}\n${last.slice(0, 6000)}\n${fence}\n`;
+          c.value = `About this ${tool.name} result:\n${fence}${result.language ?? ""}\n${last.slice(0, 6000)}\n${fence}\nMy question: `;
           toggleTools(false);
           autoGrow();
           c.focus();
+          // Cursor at the end, on "My question:" - a bare paste only gets
+          // the result read back.
+          c.setSelectionRange(c.value.length, c.value.length);
         })
       );
       if (state.capabilities.newFile) {

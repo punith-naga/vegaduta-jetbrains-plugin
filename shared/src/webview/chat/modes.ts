@@ -50,12 +50,28 @@ export function canReleaseParked(route: Route, hasAgent: boolean, busy: boolean)
 }
 
 /** The model a one-click "use on-device AI" should use: one already
- * downloaded first, then the auto-selection's recommendation, then anything
- * the device can run. Never a model that does not fit. */
-export function pickQuickModel<M extends { downloaded: boolean; fits: boolean; recommended: boolean }>(
+ * downloaded first (no wait at all), otherwise the LIGHTEST model the device
+ * can run - the fastest download and the least that can go wrong for someone
+ * trying it for the first time. Bigger models stay one click away in the
+ * list. Never a model that does not fit. */
+export function pickQuickModel<M extends { downloaded: boolean; fits: boolean; sizeBytes: number }>(
   models: readonly M[]
 ): M | undefined {
-  return models.find((m) => m.downloaded && m.fits) ?? models.find((m) => m.recommended && m.fits) ?? models.find((m) => m.fits);
+  const downloaded = models.find((m) => m.downloaded && m.fits);
+  if (downloaded) return downloaded;
+  return [...models].filter((m) => m.fits).sort((a, b) => a.sizeBytes - b.sizeBytes)[0];
+}
+
+/** "Llama-3.2-1B-Instruct-q4f16_1-MLC" -> "Llama 3.2 1B": a name a person
+ * can read, for buttons and cards. */
+export function friendlyModelName(id: string): string {
+  return id
+    .replace(/-q\d+f\d+(_\d+)?-MLC$/i, "")
+    .replace(/-MLC$/i, "")
+    .replace(/-(Instruct|it|Chat)$/i, "")
+    .replace(/-/g, " ")
+    .replace(/\bit\b/g, "")
+    .trim();
 }
 
 export const PRIVATE_BLOCKED_TYPES: ReadonlySet<WebviewToHost["type"]> = new Set<WebviewToHost["type"]>([

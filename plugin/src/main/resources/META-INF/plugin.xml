@@ -76,6 +76,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.5.1</h3>
+        <ul>
+          <li>The on-device model panel opens with one clear first step - "Start with the
+              lightest model" - and one click always picks the lightest model (or one you
+              already downloaded), with plain names and sizes.</li>
+        </ul>
         <h3>0.5.0</h3>
         <ul>
           <li><b>Free on-device AI, one click, no Ollama needed.</b> Pick a model (Qwen2.5

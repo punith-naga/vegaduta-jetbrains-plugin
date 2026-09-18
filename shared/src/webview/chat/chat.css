@@ -3609,3 +3609,65 @@ body > * {
     width: 100% !important;
   }
 }
+
+/* "Start here" - the one-click first model, above any model list. */
+.vd-start-here {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 4px 0 10px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(124, 108, 240, 0.12), transparent 60%) padding-box,
+    linear-gradient(var(--vd-surface-2), var(--vd-surface-2)) padding-box,
+    var(--vd-grad) border-box;
+}
+
+.vd-start-here-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.vd-start-here-text span {
+  font-size: 0.86em;
+  color: var(--vd-muted);
+}
+
+.vd-start-here .btn-primary {
+  flex: 0 0 auto;
+}
+
+/* "Want a more powerful model?" - collapsible guide under every model list. */
+.vd-more-power {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--vd-surface-2);
+  border: 1px solid var(--vd-border);
+  border-radius: 12px;
+}
+
+.vd-more-power summary {
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--vd-link);
+}
+
+.vd-more-power-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88em;
+  color: var(--vd-muted);
+}
+
+.vd-more-power-steps strong {
+  color: var(--vd-fg);
+}

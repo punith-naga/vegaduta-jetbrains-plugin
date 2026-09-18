@@ -5,35 +5,46 @@
 
 import mainSrc from "../src/webview/chat/main.ts?raw";
 import { describe, expect, it } from "vitest";
-import { canReleaseParked, pickQuickModel } from "../src/webview/chat/modes";
+import { canReleaseParked, friendlyModelName, pickQuickModel } from "../src/webview/chat/modes";
 import { normalizeCapabilities } from "../src/webview/chat/commands";
 
-const model = (id: string, o: Partial<{ downloaded: boolean; fits: boolean; recommended: boolean }> = {}) => ({
+const model = (id: string, o: Partial<{ downloaded: boolean; fits: boolean; sizeBytes: number }> = {}) => ({
   id,
   downloaded: false,
   fits: true,
-  recommended: false,
+  sizeBytes: 1_000_000_000,
   ...o,
 });
 
 describe("pickQuickModel", () => {
-  it("prefers a model that is already downloaded", () => {
-    const list = [model("rec", { recommended: true }), model("have", { downloaded: true })];
+  it("prefers a model that is already downloaded - no wait at all", () => {
+    const list = [model("tiny", { sizeBytes: 500 }), model("have", { downloaded: true, sizeBytes: 9_000 })];
     expect(pickQuickModel(list)?.id).toBe("have");
   });
 
-  it("then the recommended one", () => {
-    const list = [model("a"), model("rec", { recommended: true }), model("b")];
-    expect(pickQuickModel(list)?.id).toBe("rec");
+  it("otherwise the LIGHTEST model that fits - the quickest first download", () => {
+    const list = [
+      model("llama-3b", { sizeBytes: 2_260_000_000 }),
+      model("llama-1b", { sizeBytes: 880_000_000 }),
+      model("qwen-1.5b", { sizeBytes: 1_630_000_000 }),
+    ];
+    expect(pickQuickModel(list)?.id).toBe("llama-1b");
   });
 
-  it("then anything that fits", () => {
-    expect(pickQuickModel([model("big", { fits: false }), model("small")])?.id).toBe("small");
+  it("skips a lighter model the device cannot run", () => {
+    expect(pickQuickModel([model("tiny", { fits: false, sizeBytes: 1 }), model("small", { sizeBytes: 2 })])?.id).toBe("small");
   });
 
-  it("never picks a model the device cannot run, even if downloaded or recommended", () => {
-    const list = [model("x", { fits: false, downloaded: true }), model("y", { fits: false, recommended: true })];
-    expect(pickQuickModel(list)).toBeUndefined();
+  it("never picks a model the device cannot run, even if downloaded", () => {
+    expect(pickQuickModel([model("x", { fits: false, downloaded: true })])).toBeUndefined();
+  });
+});
+
+describe("friendlyModelName", () => {
+  it("turns WebLLM ids into names a person can read", () => {
+    expect(friendlyModelName("Llama-3.2-1B-Instruct-q4f16_1-MLC")).toBe("Llama 3.2 1B");
+    expect(friendlyModelName("Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC")).toBe("Qwen2.5 Coder 1.5B");
+    expect(friendlyModelName("gemma-2-2b-it-q4f16_1-MLC")).toBe("gemma 2 2b");
   });
 });
 
