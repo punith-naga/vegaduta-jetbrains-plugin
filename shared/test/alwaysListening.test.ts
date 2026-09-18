@@ -109,3 +109,20 @@ describe("popOut capability", () => {
     expect("popOut" in normalizeCapabilities({ context: [] })).toBe(false);
   });
 });
+
+describe("bundled local runtime (IDE hosts without WebGPU)", () => {
+  it("carries the localRuntime capability only when the host sets it to true", () => {
+    expect(normalizeCapabilities({ context: [], localRuntime: true }).localRuntime).toBe(true);
+    expect("localRuntime" in normalizeCapabilities({ context: [], localRuntime: 1 })).toBe(false);
+  });
+
+  it("asks the host for the runtime's state on init and renders every runtime.status", () => {
+    expect(mainSrc).toMatch(/if \(state\.capabilities\.localRuntime\) transport\.post\(\{ type: "runtime\.query" \}\);/);
+    expect(mainSrc).toMatch(/case "runtime\.status": \{/);
+  });
+
+  it("routes one-click on-device AI to the runtime where the host has one", () => {
+    expect(mainSrc).toMatch(/if \(state\.capabilities\.localRuntime\) \{\s*const id = recommendedRuntimeModel\(\);/);
+    expect(mainSrc).toMatch(/transport\.post\(\{ type: "runtime\.install", modelId \}\)/);
+  });
+});

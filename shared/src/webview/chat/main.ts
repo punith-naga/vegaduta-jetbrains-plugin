@@ -38,6 +38,7 @@ import type {
   EngineStatus,
   HostCapabilities,
   HostToWebview,
+  RuntimeStatus,
   WebviewTransport,
 } from "../protocol";
 import { nextReqId } from "../protocol";
@@ -167,6 +168,9 @@ interface ChatAppState {
    * out, no model yet). Held - never dropped - and sent by itself the moment
    * sign-in completes or an on-device model is ready. */
   parked: SendRequest | null;
+  /** The host's bundled local runtime (capabilities.localRuntime), as last
+   * reported by runtime.status; null until the first report. */
+  runtime: RuntimeStatus | null;
   /** Instant Tools drawer (offline utilities - no account, model or network). */
   toolsOpen: boolean;
   toolId: string | null;
@@ -207,6 +211,7 @@ const state: ChatAppState = {
   armedRecipe: null,
   bench: { running: false, result: null },
   parked: null,
+  runtime: null,
   toolsOpen: false,
   toolId: null,
   toolsQuery: "",
@@ -600,7 +605,7 @@ function renderPrivacy(): void {
   banner.append(details);
   if (!engineReady()) {
     const warn = el("div", "vd-private-warn");
-    if (state.hostLocalEngine) {
+    if (onDeviceOffered()) {
       warn.append(
         el(
           "span",
@@ -685,7 +690,7 @@ function renderAuth(): void {
         "auth-sub",
         engineReady()
           ? "Chatting on this device. Sign in for team agents."
-          : state.hostLocalEngine
+          : onDeviceOffered()
             ? "Free on-device AI and tools. Sign in for team agents."
             : "Tools work now. Sign in to chat with your agents."
       )
@@ -713,7 +718,7 @@ function renderComposer(): void {
   if (!enabled && state.privateMode) {
     input.placeholder = "Ask privately - I'll answer as soon as an on-device model is ready";
   } else if (!enabled) {
-    input.placeholder = state.hostLocalEngine
+    input.placeholder = onDeviceOffered()
       ? "Ask anything - explain, test, review, refactor… (/ for commands)"
       : "Ask anything - sign in and I'll answer (/ for commands)";
   } else if (state.armedRecipe) {
@@ -815,8 +820,8 @@ function renderParked(): void {
   card.append(head, el("blockquote", "vd-parked-quote", state.parked.display));
 
   const options = el("div", "vd-parked-options");
-  if (state.hostLocalEngine) {
-    const loading = state.engine.state === "loading" || state.downloadingId !== null;
+  if (onDeviceOffered()) {
+    const loading = state.engine.state === "loading" || state.downloadingId !== null || runtimeBusy();
     options.append(
       optionTile(
         "chip",
@@ -874,6 +879,12 @@ function optionTile(iconName: string, title: string, detail: string, run: () => 
 /** One click to an on-device answer: download the recommended model when the
  * device can run one, otherwise open the model list, which says why not. */
 async function quickLocalModel(): Promise<void> {
+  if (state.capabilities.localRuntime) {
+    const id = recommendedRuntimeModel();
+    if (id && !runtimeBusy()) runtimeInstall(id);
+    else void toggleModels(true);
+    return;
+  }
   if (!engineHost) {
     void toggleModels(true);
     return;
@@ -975,14 +986,23 @@ function renderEngine(): void {
         ? `Loading model… ${Math.round((state.engine.progress ?? 0) * 100)}%`
         : state.engine.state === "idle"
           ? "On-device: download a model"
-          : `On-device off${state.engine.detail ? `: ${state.engine.detail}` : ""}`;
-  chip.textContent = label;
-  if (state.hostLocalEngine) {
-    chip.classList.add("engine-chip-clickable");
-    chip.title = "On-device models - click to download, switch or delete";
-    chip.setAttribute("role", "button");
-    chip.tabIndex = 0;
-  }
+          : "On-device: set up";
+  const rt = state.runtime;
+  chip.textContent =
+    state.engine.state !== "ready" && rt?.state === "downloading"
+      ? `Downloading model… ${Math.round((rt.progress ?? 0) * 100)}%`
+      : state.engine.state !== "ready" && rt?.state === "starting"
+        ? "Starting model…"
+        : label;
+  if (rt && runtimeBusy()) chip.className = "engine-chip engine-loading";
+  // Always a button: "off" with no way forward read as broken. With an engine
+  // host it opens the model panel; without one it explains the setup.
+  chip.classList.add("engine-chip-clickable");
+  chip.setAttribute("role", "button");
+  chip.tabIndex = 0;
+  chip.title = onDeviceOffered()
+    ? `On-device models - click to download, switch or delete${state.engine.detail ? ` (${state.engine.detail})` : ""}`
+    : `Free AI on your own machine - click to see how to set it up${state.engine.detail ? ` (${state.engine.detail})` : ""}`;
   renderLocalToggle();
   renderComposer();
   renderWelcome();
@@ -1056,6 +1076,86 @@ async function refreshModels(): Promise<void> {
   if (state.modelsOpen) renderModels();
 }
 
+/** Some on-device path exists here: the webview engine, or the host's
+ * bundled runtime (IDE hosts without WebGPU). */
+function onDeviceOffered(): boolean {
+  return state.hostLocalEngine || state.capabilities.localRuntime === true;
+}
+
+function runtimeBusy(): boolean {
+  const st = state.runtime?.state;
+  return st === "downloading" || st === "starting";
+}
+
+function runtimeInstall(modelId: string): void {
+  transport.post({ type: "runtime.install", modelId });
+}
+
+function recommendedRuntimeModel(): string | undefined {
+  const models = state.runtime?.models ?? [];
+  return (models.find((m) => m.installed) ?? models.find((m) => m.recommended) ?? models[0])?.id;
+}
+
+function formatSize(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
+}
+
+/** The IDE hosts' model panel: one click downloads (checksum-verified) and
+ * runs a model with the bundled llama.cpp runtime, entirely on this machine. */
+function renderRuntimePanel(panel: HTMLElement): void {
+  const rt = state.runtime;
+  panel.append(
+    el(
+      "p",
+      "engine-panel-note",
+      "Free AI that runs on this computer: pick a model and VegaDūta downloads it, checks it and runs it locally. No account, no Ollama needed - chat, completions and the coding agent then work offline."
+    )
+  );
+  if (!rt) {
+    panel.append(el("p", "engine-panel-note", "Checking this computer…"));
+    return;
+  }
+  if (rt.state === "downloading" || rt.state === "starting") {
+    const pct = Math.round((rt.progress ?? 0) * 100);
+    panel.append(el("p", "engine-panel-note", rt.detail ?? (rt.state === "starting" ? "Starting the model…" : `Downloading… ${pct}%`)));
+    const bar = el("div", `engine-progress${rt.state === "starting" ? " engine-progress-starting" : ""}`);
+    const fill = el("div", "engine-progress-fill");
+    fill.style.width = `${pct}%`;
+    bar.append(fill);
+    panel.append(bar, button("Cancel", "btn-ghost", () => transport.post({ type: "runtime.stop" })));
+    return;
+  }
+  if (rt.state === "error") panel.append(el("p", "vd-notice vd-notice-error", rt.detail ?? "Something went wrong."));
+  if (rt.state === "running") {
+    panel.append(el("p", "engine-panel-note", `Running ${rt.modelId ?? "a model"} on this computer.`));
+  }
+  const list = el("div", "engine-models");
+  for (const m of rt.models) {
+    const row = el("div", `engine-model${m.installed ? " engine-model-downloaded" : ""}`);
+    const info = el("div", "engine-model-info");
+    info.append(
+      el("span", "engine-model-name", m.displayName),
+      el(
+        "span",
+        "engine-model-detail",
+        [formatSize(m.sizeBytes), m.installed ? "downloaded" : "", m.recommended ? "recommended" : ""].filter(Boolean).join(" · ")
+      )
+    );
+    const actions = el("div", "engine-model-actions");
+    const running = rt.state === "running" && rt.modelId === m.id;
+    if (running) {
+      actions.append(el("span", "engine-model-active", "Running"), button("Stop", "btn-ghost", () => transport.post({ type: "runtime.stop" })));
+    } else {
+      actions.append(
+        button(m.installed ? "Run" : `Download & run`, m.recommended || m.installed ? "btn-primary" : "btn-ghost", () => runtimeInstall(m.id))
+      );
+    }
+    row.append(info, actions);
+    list.append(row);
+  }
+  panel.append(list);
+}
+
 function renderModels(): void {
   const panel = modelsPanel();
   panel.textContent = "";
@@ -1065,6 +1165,10 @@ function renderModels(): void {
   head.append(button("Close", "btn-ghost", () => void toggleModels(false)));
   panel.append(head);
 
+  if (state.capabilities.localRuntime) {
+    renderRuntimePanel(panel);
+    return;
+  }
   if (!engineHost) {
     panel.append(el("p", "engine-panel-note", "The on-device engine is not enabled for this host."));
     return;
@@ -1730,7 +1834,7 @@ function quickStarts(): QuickStart[] {
     detail: `Ready-made recipes for ${roleLabel(currentRole())} work, across the whole SDLC`,
     run: () => toggleToolkit(true),
   });
-  if (state.hostLocalEngine && !engineReady()) {
+  if (onDeviceOffered() && !engineReady()) {
     cards.push({
       title: "Download a free on-device model", icon: "chip",
       detail: "Private and free: runs on this machine, no account needed",
@@ -1950,7 +2054,7 @@ function renderWelcome(): void {
 
 /** On-device AI status as a card: download (one click), loading, or ready. */
 function renderEngineCard(): HTMLElement | null {
-  if (!state.hostLocalEngine) return null;
+  if (!onDeviceOffered()) return null;
   const card = el("div", "vd-engine-card");
   const ic = el("span", "vd-engine-icon");
   ic.append(icon("chip"));
@@ -1963,29 +2067,35 @@ function renderEngineCard(): HTMLElement | null {
       el("span", undefined, `${state.engine.modelId ? shortModelName(state.engine.modelId) : "Local model"} · private · works offline`)
     );
     actions.append(button("Models", "btn-ghost", () => void toggleModels(true)));
-  } else if (state.engine.state === "loading" || state.downloadingId) {
-    const pct = Math.round((state.engine.progress ?? 0) * 100);
-    text.append(el("strong", undefined, `Getting your model ready… ${pct}%`), el("span", undefined, "You can keep typing - I'll answer when it's done."));
-    const bar = el("div", "engine-progress");
+  } else if (state.engine.state === "loading" || state.downloadingId || runtimeBusy()) {
+    const pct = Math.round((runtimeBusy() ? state.runtime?.progress ?? 0 : state.engine.progress ?? 0) * 100);
+    text.append(
+      el("strong", undefined, runtimeBusy() && state.runtime?.state === "starting" ? "Starting your model…" : `Getting your model ready… ${pct}%`),
+      el("span", undefined, (runtimeBusy() && state.runtime?.detail) || "You can keep typing - I'll answer when it's done.")
+    );
+    const bar = el("div", `engine-progress${runtimeBusy() && state.runtime?.state === "starting" ? " engine-progress-starting" : ""}`);
     const fill = el("div", "engine-progress-fill");
     fill.style.width = `${pct}%`;
     bar.append(fill);
     text.append(bar);
   } else {
     const pick = state.models ? pickQuickModel(state.models.models) : undefined;
+    const rtPick = state.runtime?.models.find((x) => x.id === recommendedRuntimeModel());
     text.append(
       el("strong", undefined, "Free AI that runs on this machine"),
       el(
         "span",
         undefined,
-        pick
-          ? `${shortModelName(pick.id)}${pick.sizeBytes ? ` · ${formatBytes(pick.sizeBytes)} once` : ""} · private · no account`
-          : "Private, no account, nothing leaves your machine"
+        rtPick
+          ? `${rtPick.displayName} · ${formatSize(rtPick.sizeBytes)} once · private · no account`
+          : pick
+            ? `${shortModelName(pick.id)}${pick.sizeBytes ? ` · ${formatBytes(pick.sizeBytes)} once` : ""} · private · no account`
+            : "Private, no account, nothing leaves your machine"
       )
     );
     const go = el("button", "btn-primary");
     go.type = "button";
-    go.append(icon("bolt"), el("span", undefined, pick?.downloaded ? "Use it" : "Get it"));
+    go.append(icon("bolt"), el("span", undefined, (rtPick ? rtPick.installed : pick?.downloaded) ? "Use it" : "Get it"));
     go.addEventListener("click", () => void quickLocalModel());
     actions.append(go, button("Choose", "btn-ghost", () => void toggleModels(true)));
     if (!state.models && engineHost) {
@@ -2054,7 +2164,7 @@ function showHelp(): void {
   const lines: string[] = ["### What VegaDūta can do here", ""];
   lines.push(
     "- **Hosted chat** - sign in to talk to your team's agents and run workflows from the toolbar.",
-    state.hostLocalEngine
+    onDeviceOffered()
       ? "- **On-device chat** - download a free model from the on-device chip; the model runs on this machine with no account."
       : "- **On-device chat** is not available in this host.",
     "- **Toolkit** (grid icon, or `/toolkit`) - ready-made recipes for every SDLC phase, plus your own. Create, import and export them there.",
@@ -2083,6 +2193,42 @@ function showHelp(): void {
   const roleRow = el("label", "vd-role-row");
   roleRow.append(el("span", undefined, "Tools are ordered for"), roleSelect((role) => setRole(role)));
   view.item.append(roleRow);
+}
+
+/** How to get free on-device AI in THIS host, as a help card. IDE hosts
+ * (JCEF, SWT) have no WebGPU, so on-device there means the person's own model
+ * server - these are the exact steps and setting names. */
+function showOnDeviceSetup(): void {
+  const lines: string[] = ["### Free AI on your own machine", ""];
+  const serverSteps = [
+    "1. Install **Ollama** (ollama.com) or **LM Studio** (lmstudio.ai) - both free.",
+    "2. Get a coding model, e.g. in a terminal: `ollama pull qwen2.5-coder:7b` (or download one in LM Studio and start its local server).",
+  ];
+  if (state.platform === "jetbrains") {
+    lines.push(
+      ...serverSteps,
+      "3. Open **Settings > Tools > VegaDuta** and click **Detect local server** - or enter it yourself: *Local inference server* `127.0.0.1:11434` (with `http://` in front), *Local model* `qwen2.5-coder:7b`.",
+      "4. Apply. Code completions and the coding agent (**Tools > VegaDuta > Start a Coding Task**) then run on your machine - free, no account, nothing leaves it."
+    );
+  } else if (state.platform === "eclipse") {
+    lines.push(
+      ...serverSteps,
+      "3. Open **Window > Preferences > VegaDuta**, and under **Local inference server** set *Base URL* `127.0.0.1:11434` (with `http://` in front) and *Model* `qwen2.5-coder:7b`.",
+      "4. Apply. VegaDūta checks the server and reports it under this view."
+    );
+  } else {
+    lines.push(
+      "This host could not start its on-device engine" + (state.engine.detail ? ` (${state.engine.detail})` : "") + ".",
+      "",
+      ...serverSteps,
+      "3. Point VegaDūta's local model server setting at it (Ollama listens on port 11434 of this machine)."
+    );
+  }
+  lines.push("", "Until then, the **Instant tools** (bolt icon) work offline, and signing in gives you your team's agents.");
+  const view = createAssistantView();
+  view.item.classList.add("msg-help");
+  view.setText(lines.join("\n"), true);
+  view.finish({ retryable: false });
 }
 
 // --- history ------------------------------------------------------------------------------
@@ -3501,11 +3647,11 @@ function submit(): void {
 
 function composeBlockedText(): string {
   if (state.privateMode) {
-    return state.hostLocalEngine
+    return onDeviceOffered()
       ? "Private Mode is on and no on-device model is ready, so nothing can answer. Open the on-device models to download one - nothing is sent to a hosted agent instead."
       : "Private Mode is on and this host has no on-device engine, so nothing can answer. Nothing is sent to a hosted agent instead.";
   }
-  return state.hostLocalEngine ? "Sign in, or download a free on-device model, to start chatting." : "Sign in to start chatting.";
+  return onDeviceOffered() ? "Sign in, or download a free on-device model, to start chatting." : "Sign in to start chatting.";
 }
 
 /** /tour: attach the current file WITH line numbers, ask for stops. */
@@ -4097,10 +4243,33 @@ function onHostMessage(message: HostToWebview): void {
       renderPrivacy();
       if (state.toolkitOpen) renderToolkit();
       renderRoomHint();
-      if (message.hostLocalEngine && !engineHost) {
-        void startEngineHost();
+      if (state.capabilities.localRuntime) transport.post({ type: "runtime.query" });
+      {
+        // A host that starts or stops a local server re-sends init with new
+        // edge settings (the bundled runtime's random port). The engine host
+        // probes once and caches, so point it at the new server by starting
+        // a fresh one - and drop it when the host no longer offers one.
+        const edgeKey = JSON.stringify(message.edgeSettings ?? null);
+        const edgeChanged = edgeKey !== lastEdgeSettingsKey;
+        lastEdgeSettingsKey = edgeKey;
+        if (message.hostLocalEngine && (!engineHost || edgeChanged)) {
+          engineHost = null;
+          void startEngineHost();
+        } else if (!message.hostLocalEngine && engineHost) {
+          engineHost = null;
+          state.engine = { state: "unavailable" };
+          renderEngine();
+        }
       }
       break;
+    case "runtime.status": {
+      const { type: _type, ...status } = message;
+      state.runtime = status;
+      renderEngine();
+      if (state.modelsOpen) renderModels();
+      renderParked();
+      break;
+    }
     case "auth.changed": {
       const wasSignedIn = state.auth.signedIn;
       state.auth = message.auth;
@@ -4224,6 +4393,9 @@ function onHostMessage(message: HostToWebview): void {
 
 let engineHost: EngineHost | null = null;
 
+/** The edge settings of the last init, to notice a moved local server. */
+let lastEdgeSettingsKey: string | undefined;
+
 async function startEngineHost(): Promise<void> {
   try {
     const mod = (await import("../engineHost")) as unknown as {
@@ -4239,7 +4411,11 @@ async function startEngineHost(): Promise<void> {
       // An older engine build without Private Mode: the transport guard and
       // every UI gate still hold.
     }
+    const mine = engineHost;
     await engineHost.start((status) => {
+      // A replaced engine host (the local server moved) must not overwrite
+      // the current one's status.
+      if (engineHost !== mine) return;
       const wasReady = state.engine.state === "ready";
       state.engine = status;
       renderEngine();
@@ -4417,13 +4593,15 @@ export function bootChatApp(injected?: WebviewTransport): void {
     renderComposer();
   });
   const chip = $("engine-chip");
-  chip.addEventListener("click", () => {
-    if (state.hostLocalEngine) void toggleModels();
-  });
+  const openOnDevice = () => {
+    if (onDeviceOffered()) void toggleModels();
+    else showOnDeviceSetup();
+  };
+  chip.addEventListener("click", openOnDevice);
   chip.addEventListener("keydown", (event) => {
-    if ((event.key === "Enter" || event.key === " ") && state.hostLocalEngine) {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      void toggleModels();
+      openOnDevice();
     }
   });
 

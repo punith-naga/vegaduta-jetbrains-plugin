@@ -3563,3 +3563,49 @@ body > * {
     display: none;
   }
 }
+
+/* On-device model rows (bundled runtime + WebLLM): name over details, the
+ * action on the right - never overlapping. */
+.engine-model {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.engine-model-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 1px;
+}
+
+.engine-model-name,
+.engine-model-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engine-model-actions {
+  flex: none;
+}
+
+/* "Starting" has no percentage: an indeterminate shimmer instead of an
+ * empty bar. */
+.engine-progress-starting .engine-progress-fill {
+  width: 40% !important;
+  animation: vd-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes vd-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .engine-progress-starting .engine-progress-fill {
+    animation: none;
+    width: 100% !important;
+  }
+}

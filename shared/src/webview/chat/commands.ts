@@ -30,6 +30,7 @@ export function normalizeCapabilities(raw: unknown): HostCapabilities {
     ...(r.knowledge === true ? { knowledge: true } : {}),
     ...(r.privateMode === true ? { privateMode: true } : {}),
     ...(r.popOut === true ? { popOut: true } : {}),
+    ...(r.localRuntime === true ? { localRuntime: true } : {}),
   };
 }
 

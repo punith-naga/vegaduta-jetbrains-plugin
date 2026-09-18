@@ -15,6 +15,14 @@ import ai.vegaduta.ide.agent.localEndpointHints
 import ai.vegaduta.ide.auth.DeviceFlowLoginService
 import ai.vegaduta.ide.auth.TokenStore
 import ai.vegaduta.ide.completions.LocalCompletionEngine
+import ai.vegaduta.ide.runtime.BundledRuntimeListener
+import ai.vegaduta.ide.runtime.BundledRuntimeService
+import ai.vegaduta.ide.runtime.CATALOG_MODELS
+import ai.vegaduta.ide.runtime.RECOMMENDED_MODEL
+import ai.vegaduta.ide.runtime.RuntimeState
+import ai.vegaduta.ide.runtime.RuntimeStatusSnapshot
+import ai.vegaduta.ide.runtime.catalogModel
+import ai.vegaduta.ide.runtime.formatBytes
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
@@ -79,6 +87,28 @@ class VegadutaConfigurable : Configurable {
     // Private Mode - the same flag the chat panel's toggle sets.
     private val privateModeCheck =
         JBCheckBox("Private Mode: keep prompts, code and attachments on this machine")
+
+    // Bundled on-device model (ai.vegaduta.ide.runtime.BundledRuntimeService).
+    // Acts at once, like the sign-in buttons - not part of apply().
+    private val runtimeModelCombo = ComboBox(CATALOG_MODELS.map { it.displayName }.toTypedArray())
+    private val runtimeRunButton = JButton("Download & run")
+    private val runtimeStopButton = JButton("Stop")
+    private val runtimeStatusLabel = JBLabel()
+    private val runtimeListener = object : BundledRuntimeListener {
+        override fun statusChanged(status: RuntimeStatusSnapshot) {
+            SwingUtilities.invokeLater { showRuntimeStatus(status) }
+        }
+
+        // The runtime wrote localServerBaseUrl/Model directly. Refresh the two
+        // fields, or pressing OK would write their stale text back over it.
+        override fun localServerSettingsChanged() {
+            SwingUtilities.invokeLater {
+                val settings = VegadutaSettingsState.getInstance()
+                localBaseField.text = settings.localServerBaseUrl
+                localModelField.text = settings.localServerModel
+            }
+        }
+    }
 
     private val authListener = Runnable { SwingUtilities.invokeLater { refreshStatus() } }
 
@@ -160,6 +190,20 @@ class VegadutaConfigurable : Configurable {
             add(agentKey)
         }
 
+        runtimeRunButton.addActionListener {
+            val model = CATALOG_MODELS.getOrNull(runtimeModelCombo.selectedIndex) ?: RECOMMENDED_MODEL
+            service<BundledRuntimeService>().install(model.id)
+        }
+        runtimeStopButton.addActionListener {
+            // stop() waits (briefly) for the process to exit - not on the EDT.
+            ApplicationManager.getApplication().executeOnPooledThread { service<BundledRuntimeService>().stop() }
+        }
+        val runtimeRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            add(runtimeModelCombo)
+            add(runtimeRunButton)
+            add(runtimeStopButton)
+        }
+
         val built = FormBuilder.createFormBuilder()
             .addLabeledComponent("Environment:", envCombo)
             .addLabeledComponent("Custom API base:", customApiField)
@@ -178,6 +222,16 @@ class VegadutaConfigurable : Configurable {
                 )
             )
             .addSeparator()
+            .addLabeledComponent("Bundled on-device model:", runtimeRow)
+            .addComponent(runtimeStatusLabel)
+            .addComponent(
+                JBLabel(
+                    "<html>Downloads the open-source llama.cpp server and the model you pick (checked " +
+                        "against pinned checksums) into your home folder's .vegaduta directory, runs it " +
+                        "on this computer only, and fills in the two fields below. It starts again when " +
+                        "the IDE opens, until you press Stop.</html>"
+                )
+            )
             .addLabeledComponent("Local inference server:", localBaseField)
             .addLabeledComponent("Local model:", localModelField)
             .addComponent(localCompletionsCheck)
@@ -212,6 +266,12 @@ class VegadutaConfigurable : Configurable {
             .panel
         panel = built
         service<TokenStore>().addAuthListener(authListener)
+        val runtime = service<BundledRuntimeService>()
+        runtime.addListener(runtimeListener)
+        // Preselect the model last run, else the recommended one.
+        val lastRun = catalogModel(VegadutaSettingsState.getInstance().bundledRuntimeModel) ?: RECOMMENDED_MODEL
+        runtimeModelCombo.selectedIndex = CATALOG_MODELS.indexOf(lastRun)
+        showRuntimeStatus(runtime.status())
         reset()
         return built
     }
@@ -273,7 +333,41 @@ class VegadutaConfigurable : Configurable {
 
     override fun disposeUIResources() {
         service<TokenStore>().removeAuthListener(authListener)
+        service<BundledRuntimeService>().removeListener(runtimeListener)
         panel = null
+    }
+
+    private fun showRuntimeStatus(status: RuntimeStatusSnapshot) {
+        val name = catalogModel(status.modelId)?.displayName ?: status.modelId
+        val percent = status.progress?.let { " (${(it * 100).toInt()}%)" }.orEmpty()
+        runtimeStatusLabel.text = when (status.state) {
+            RuntimeState.ABSENT -> "Not downloaded. The recommended model is ${formatBytes(RECOMMENDED_MODEL.sizeBytes)}."
+            RuntimeState.DOWNLOADING -> (status.detail ?: "Downloading...") + percent
+            RuntimeState.STARTING -> status.detail ?: "Starting $name..."
+            RuntimeState.RUNNING -> "Running: $name at ${status.baseUrl}"
+            RuntimeState.STOPPED -> "Downloaded, not running."
+            RuntimeState.ERROR -> "<html>" + (status.detail ?: "Something went wrong.")
+                .replace("&", "&amp;").replace("<", "&lt;").replace("\n", "<br>") + "</html>"
+        }
+        val busy = status.state == RuntimeState.DOWNLOADING || status.state == RuntimeState.STARTING
+        runtimeStopButton.isEnabled = busy || status.state == RuntimeState.RUNNING
+        runtimeStopButton.text = if (status.state == RuntimeState.DOWNLOADING) "Cancel" else "Stop"
+        runtimeRunButton.isEnabled = !busy
+        runtimeModelCombo.isEnabled = !busy
+        // Mark what is already on disk, so "Download & run" is honest about
+        // what it will fetch.
+        val installed = status.models.filter { it.installed }.map { it.id }.toSet()
+        val selected = runtimeModelCombo.selectedIndex
+        val labels = CATALOG_MODELS.map { m ->
+            m.displayName + " - " + formatBytes(m.sizeBytes) +
+                (if (m.recommended) ", recommended" else "") +
+                (if (m.id in installed) ", downloaded" else "")
+        }
+        if ((0 until runtimeModelCombo.itemCount).map { runtimeModelCombo.getItemAt(it) } != labels) {
+            runtimeModelCombo.removeAllItems()
+            labels.forEach { runtimeModelCombo.addItem(it) }
+            runtimeModelCombo.selectedIndex = selected.coerceIn(0, labels.size - 1)
+        }
     }
 
     private fun updateCustomFieldsEnabled() {

@@ -26,6 +26,8 @@ import ai.vegaduta.ide.agent.AgentRunSuccess
 import ai.vegaduta.ide.agent.ApprovalGate
 import ai.vegaduta.ide.agent.ApprovalKind
 import ai.vegaduta.ide.agent.DEFAULT_LOCAL_BASE_URL
+import ai.vegaduta.ide.agent.DiscoveredEndpoint
+import ai.vegaduta.ide.runtime.BundledRuntimeService
 import ai.vegaduta.ide.agent.OpenAiCompatibleModel
 import ai.vegaduta.ide.agent.OpenAiCompatibleOptions
 import ai.vegaduta.ide.agent.ProjectToolExecutor
@@ -157,7 +159,15 @@ private class AgentRunTask(
                 notify("Private Mode is on and the agent endpoint is not on this machine - the task was not started.", NotificationType.WARNING)
                 return
             }
-            val discovered = if (configured == null) discoverLocalEndpoint(cancelled = cancelled) else null
+            // The bundled on-device runtime, when it is up, beats probing the
+            // well-known ports: the person set it up in this plugin, and its
+            // port is random, so discovery would never find it.
+            val bundled = if (configured == null) service<BundledRuntimeService>().runningEndpoint() else null
+            val discovered = when {
+                configured != null -> null
+                bundled != null -> DiscoveredEndpoint(bundled.first, "VegaDuta's bundled llama.cpp", listOf(bundled.second))
+                else -> discoverLocalEndpoint(cancelled = cancelled)
+            }
             val baseUrl = configured ?: discovered?.baseUrl
 
             val model = OpenAiCompatibleModel(

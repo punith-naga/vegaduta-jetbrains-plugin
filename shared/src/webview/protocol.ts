@@ -105,6 +105,40 @@ export interface HostCapabilities {
   /** ui.popOut moves the chat into its own window (JetBrains: a windowed
    * tool window). Absent = the panel only explains how to make room. */
   popOut?: boolean;
+  /** The HOST can download and run a bundled local model runtime (llama.cpp's
+   * llama-server + a GGUF model) - one click, no Ollama/LM Studio needed. For
+   * hosts whose embedded browser has no WebGPU (JCEF, SWT), this is how
+   * on-device AI works. Answered with runtime.status; see RuntimeModel. */
+  localRuntime?: boolean;
+}
+
+/** One model the host's bundled runtime can download and run. */
+export interface RuntimeModel {
+  /** Stable id, also the model name the local server reports, e.g.
+   * "qwen2.5-coder-1.5b". */
+  id: string;
+  displayName: string;
+  /** Download size in bytes (the model file; the runtime itself is ~12-18 MB). */
+  sizeBytes: number;
+  /** Already downloaded and checksum-verified on this machine. */
+  installed: boolean;
+  /** The one to offer first on a typical laptop. */
+  recommended: boolean;
+}
+
+/** runtime.status - the bundled runtime's whole state, sent on every change
+ * and in reply to runtime.query. Progress is 0..1 while downloading. */
+export interface RuntimeStatus {
+  state: "absent" | "downloading" | "starting" | "running" | "stopped" | "error";
+  /** The model being downloaded/started/served. */
+  modelId?: string;
+  progress?: number;
+  /** Human-readable, e.g. "Downloading the model - 412 MB of 1.1 GB" or the
+   * error. */
+  detail?: string;
+  /** http://127.0.0.1:<port> while running. */
+  baseUrl?: string;
+  models: RuntimeModel[];
 }
 
 /** One knowledge-base hit, as POST /api/knowledge/search returns it. */
@@ -160,6 +194,7 @@ export type HostToWebview =
       theme?: "dark" | "light";
     }
   | { type: "auth.changed"; auth: AuthState }
+  | ({ type: "runtime.status" } & RuntimeStatus)
   | {
       /** Host asks the chat app to open its on-device model panel (e.g. a
        * "Download an On-Device Model" command). Optional for hosts. */
@@ -292,6 +327,23 @@ export type WebviewToHost =
       /** Move the chat into its own, resizable window. Only sent when
        * capabilities.popOut. */
       type: "ui.popOut";
+    }
+  | {
+      /** Bundled runtime (capabilities.localRuntime): ask for runtime.status. */
+      type: "runtime.query";
+    }
+  | {
+      /** Download (if needed, checksum-verified) and start `modelId`, stopping
+       * any other. The host replies with a stream of runtime.status and, once
+       * running, re-sends init with the local server wired in. A model
+       * download is allowed in Private Mode: it carries none of the person's
+       * content. */
+      type: "runtime.install";
+      modelId: string;
+    }
+  | {
+      /** Cancel a download in progress, or stop the running server. */
+      type: "runtime.stop";
     }
   | {
       /** Code Tour: open `path` (workspace-relative, as the host labelled it in

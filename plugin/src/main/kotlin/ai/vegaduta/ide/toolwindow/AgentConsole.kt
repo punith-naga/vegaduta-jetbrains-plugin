@@ -14,10 +14,18 @@
 
 package ai.vegaduta.ide.toolwindow
 
+import ai.vegaduta.ide.agent.localEndpointHints
+import com.intellij.execution.filters.HyperlinkInfo
 import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -31,6 +39,9 @@ import com.intellij.ui.content.ContentFactory
 import java.util.concurrent.atomic.AtomicReference
 
 const val AGENT_TOOL_WINDOW_ID = "VegaDuta Agent"
+
+/** plugin.xml's id for Tools > VegaDuta > Start a Coding Task. */
+private const val START_TASK_ACTION_ID = "VegaDuta.StartCodingTask"
 
 @Service(Service.Level.PROJECT)
 class AgentConsole(private val project: Project) : Disposable {
@@ -54,7 +65,45 @@ class AgentConsole(private val project: Project) : Disposable {
         val created = TextConsoleBuilderFactory.getInstance().createBuilder(project).console
         Disposer.register(this, created)
         view = created
+        printWelcome(created)
         return created
+    }
+
+    /** The empty state. Before the first run this window used to be a blank
+     * black panel, which read as "the plugin is broken". Now it says what the
+     * agent is, what it needs, and offers the two next steps as links. */
+    private fun printWelcome(c: ConsoleView) {
+        val sys = ConsoleViewContentType.SYSTEM_OUTPUT
+        val out = ConsoleViewContentType.NORMAL_OUTPUT
+        c.print("VegaDuta Agent\n", sys)
+        c.print("==============\n\n", sys)
+        c.print(
+            "A coding agent that works inside this project: it reads and searches your code,\n" +
+                "edits files and runs commands, step by step - and asks you before each edit\n" +
+                "and each command. Its live trace appears here.\n\n",
+            out,
+        )
+        c.print(
+            "It runs on YOUR model, so it is free and needs no VegaDuta account:\n" +
+                localEndpointHints() + "\n" +
+                "- or an OpenAI-compatible API key you own (set it in the settings).\n\n",
+            out,
+        )
+        c.print("  ", out)
+        c.printHyperlink("> Start a coding task", HyperlinkInfo { runAction(START_TASK_ACTION_ID) })
+        c.print("      ", out)
+        c.printHyperlink("Set up your model", HyperlinkInfo { openSettings() })
+        c.print("\n\n", out)
+        c.print("Also: Tools > VegaDuta > Start a Coding Task..., or the play button in this window's title bar.\n", sys)
+    }
+
+    private fun runAction(id: String) {
+        val action: AnAction = ActionManager.getInstance().getAction(id) ?: return
+        ActionUtil.invokeAction(action, SimpleDataContext.getProjectContext(project), ActionPlaces.TOOLWINDOW_CONTENT, null, null)
+    }
+
+    private fun openSettings() {
+        ShowSettingsUtil.getInstance().showSettingsDialog(project, "VegaDuta")
     }
 
     fun clear() {
@@ -96,5 +145,7 @@ class AgentConsoleToolWindowFactory : ToolWindowFactory, DumbAware {
         // service still hands out.
         content.isCloseable = false
         toolWindow.contentManager.addContent(content)
+        // A visible way in, even after a run has replaced the welcome text.
+        ActionManager.getInstance().getAction(START_TASK_ACTION_ID)?.let { toolWindow.setTitleActions(listOf(it)) }
     }
 }

@@ -7,9 +7,10 @@ agent on your project.
 
 You can use it in two ways:
 
-- **Free, with no account.** Run an OpenAI-compatible model server on your own
-  machine, such as [Ollama](https://ollama.com), LM Studio or llama.cpp. Your code
-  goes only to that server.
+- **Free, with no account.** Let the plugin download and run a model on your
+  computer with one click, or use a model server you already run, such as
+  [Ollama](https://ollama.com), LM Studio or llama.cpp. Your code goes only to
+  that server.
 - **Signed in to VegaDuta.** Chat with your organisation's VegaDuta agents and run
   its workflows.
 
@@ -37,13 +38,47 @@ to the editor's right-click menu.
 
 ## Quick start: free, on your own machine
 
+**The one-click way (nothing else to install).** Open **Settings | Tools |
+VegaDuta**, pick a model under **Bundled on-device model** and click **Download &
+run**. (The chat panel can start it too.) The plugin then:
+
+- downloads the open-source [llama.cpp](https://github.com/ggml-org/llama.cpp)
+  model server (12 to 18 MB, a CPU build that needs no graphics drivers; on a Mac
+  it also uses the GPU) and the model you picked;
+- checks both files against checksums built into the plugin, and throws a file
+  away if it doesn't match;
+- runs the server on your computer only (`127.0.0.1`, a free port), and fills in
+  **Local inference server** and **Local model** for you.
+
+The IDE's progress bar shows the download, and you can cancel it there or with
+**Cancel**. Once it has run, the model starts again by itself each time you open
+the IDE, until you press **Stop**. The models are Qwen2.5 Coder:
+
+| Model | Download | Notes |
+|---|---|---|
+| 1.5B, fast | 1.1 GB | Recommended. Fine on most laptops. |
+| 3B, balanced | 2.1 GB | |
+| 7B, best quality | 4.7 GB | Needs about 16 GB of RAM. |
+
+Files are kept in `.vegaduta` in your home folder (`runtime/` for the server,
+`models/` for the models). The VegaDuta Eclipse plugin uses the same folder, so
+you download each file only once. To free the space, press **Stop** and delete
+that folder.
+
+If you set **Local inference server** to your own server, the bundled one never
+overwrites it when the IDE starts. Clicking **Download & run** does switch the
+plugin to the bundled server.
+
+**Or use a server you already run.**
+
 1. Start a model server. With Ollama, for example:
    `ollama pull qwen2.5-coder:7b` and then `ollama serve`.
 2. Open **Settings | Tools | VegaDuta** and click **Detect local server**. The
    plugin tries `127.0.0.1` on ports 11434 (Ollama), 1234 (LM Studio) and 8080
    (llama.cpp), and fills in the first one that answers. You can also type the URL
    and model name yourself.
-3. Tick **Code completions from the local server** if you want completions.
+
+Either way, tick **Code completions from the local server** if you want completions.
 
 That gives you:
 
@@ -53,12 +88,14 @@ That gives you:
   and Linux) and your model's suggestion is added to the completion list.
 - **Start a Coding Task** (see [Coding agent](#coding-agent)). This needs a model
   that supports tool calling, such as `qwen2.5-coder`, `llama3.1`, `mistral-nemo`
-  or `devstral`.
+  or `devstral`. With **Agent endpoint** left empty, a running bundled model is
+  used first. Small models often stumble on multi-step tool use; the 7B one is
+  the best bundled choice for coding tasks.
 
-The plugin does not download or run models itself. The chat panel runs in the
-IDE's built-in browser (JCEF), which has no WebGPU, so "on-device" here always
-means a server you started yourself. (The VS Code and Chrome extensions can
-download a model onto your GPU. This plugin can't.)
+The chat panel runs in the IDE's built-in browser (JCEF), which has no WebGPU, so
+models never run inside the panel itself (the VS Code and Chrome extensions can
+run one on your GPU from the page). Here "on-device" always means a model server
+on your computer: the bundled one, or one you started yourself.
 
 ## Sign in (for hosted agents and workflows)
 
@@ -227,7 +264,8 @@ treat it like a script a colleague sent you.
 | Setting | Default | Notes |
 |---|---|---|
 | Environment | production | `production` (vegaduta.ai), `staging` (vegaduta.xyz), or `custom` for a self-hosted install. |
-| Local inference server / Local model | empty | Used by chat in On-device mode and by code completions. **Detect local server** fills both in. |
+| Bundled on-device model | not downloaded | Pick a model, then **Download & run** or **Stop**. Acts at once, not on OK. See [Quick start](#quick-start-free-on-your-own-machine). |
+| Local inference server / Local model | empty | Used by chat in On-device mode and by code completions. **Detect local server** or the bundled model fills both in. |
 | Code completions from the local server | off | |
 | Agent endpoint | empty | Empty means the local-server detection above. Or a provider address, such as `https://api.groq.com/openai`. |
 | Agent model | empty | Empty means the first model the server lists. It must support tool calling. |
@@ -250,6 +288,11 @@ address, so fill in both.
   server or provider you configured. With a local server, nothing leaves your
   machine. With a hosted provider, the code, search results and command output
   the agent reads go to that provider, under your key.
+- **The bundled model's download** fetches the server from GitHub
+  (`github.com/ggml-org/llama.cpp` releases) and the model from Hugging Face
+  (`huggingface.co/Qwen`). The requests carry none of your code or prompts, so
+  they are allowed in Private Mode. After that, the bundled server makes no
+  network calls of its own.
 - **Signed-in chat, knowledge search, workflows and Run** go to the VegaDuta API
   for your chosen environment. That includes your messages, your search queries
   and anything you attach. [Private Mode](#private-mode) blocks all of them.
@@ -274,8 +317,18 @@ line gives the reason:
 - the server answered but lists no models;
 - the server refused the request.
 
-Start your server, or fix the URL in Settings. The chat panel reads the URL when
-it opens, so if you change the URL, close and reopen the project.
+Start your server, or fix the URL in Settings. The chat panel reads a URL you
+type when it opens, so if you change the URL yourself, close and reopen the
+project. (When the bundled model starts or stops, the chat panel updates by
+itself.)
+
+**The bundled model shows an error.** The message includes the last lines the
+server printed. "Did not become ready within 180 seconds" usually means the
+computer doesn't have enough free memory for that model, so try a smaller one.
+"Failed its checksum check" means the downloaded file didn't match; it was
+deleted, so try again. The full server output is in the IDE log at debug level
+(**Help | Diagnostic Tools | Debug Log Settings**, add
+`#ai.vegaduta.ide.runtime`).
 
 **No local completions appear.** Check that the completions box is ticked and a
 server is set, then invoke completion **twice** (Ctrl+Space twice). A single
@@ -319,6 +372,11 @@ src/main/kotlin/ai/vegaduta/ide/
               (ui.insert / ui.newFile / ui.setCommitMessage / ui.reveal,
               CommitMessageTarget)
   privacy/    PrivateMode.kt (pure: the Private Mode policy and loopback check)
+  runtime/    RuntimeCatalog.kt (pure: pinned llama.cpp build + GGUF models, sizes,
+              SHA-256, ~/.vegaduta layout), RuntimeFiles.kt (pure: verify, download,
+              zip-slip-guarded extract, free port), RuntimeStatus.kt (pure:
+              runtime.status JSON, settings wiring), BundledRuntimeService.kt
+              (download/start/stop), BundledRuntimeStartup.kt (auto-start)
   settings/   VegadutaSettingsState.kt, VegadutaConfigurable.kt
   toolwindow/ ChatToolWindowFactory.kt, JcefBridge.kt (webview host), SwingChatPanel.kt,
               AgentConsole.kt (the agent's trace tool window)
@@ -335,6 +393,7 @@ over JCEF. `init` advertises these `capabilities`:
 - `context: ["file", "selection", "diff", "diagnostics", "gitlog"]` (no
   `"terminal"`: there is no public, stable terminal-selection API in 242+)
 - `insert`, `newFile`, `runCode` and `commitMessage`, all `true`
+- `localRuntime: true`: the bundled on-device runtime (see below).
 - wave 2: `reveal`, `knowledge` and `privateMode`, all `true`. `knowledge` is
   serviced for a JWT sign-in only; the chat app offers it only when
   `auth.mode === "jwt"`, and an API-key request is answered `signed-out` without
@@ -406,6 +465,30 @@ engine host against the WebGPU-free backend (`shared/src/edge/ollamaEngine.ts`)
 and skips WebLLM every time. The native status label under the browser re-probes
 the server itself (`LocalCompletionEngine.probeLocalServer`), so its "off" reason
 comes from the host.
+
+**Bundled runtime** (`runtime/`, `capabilities.localRuntime: true`). The webview
+sends `runtime.query`, `runtime.install {modelId}` and `runtime.stop`; the host
+answers with `runtime.status` (protocol.ts `RuntimeStatus`) on every change and
+once right after `init`. `BundledRuntimeService` (application service) downloads
+with `java.net.http` (redirects followed), hashing while it streams to a `.part`
+file and moving it into place only when the SHA-256 matches; a
+`<file>.sha256-ok` marker avoids re-hashing a 4 GB model on every start. Zips
+are extracted in Java with a zip-slip guard; `.tar.gz` uses the system `tar`
+(it restores the dylib/so symlinks), after the entry list passes the same
+guard. The server runs as
+`llama-server -m <gguf> --host 127.0.0.1 --port <free> -c 8192 --alias <modelId>`
+with its folder as the working directory (plus `LD_LIBRARY_PATH` on Linux), and
+is "running" once `GET /health` answers 200 (fallback `/v1/models`, 180 s cap).
+Then it writes `localServerBaseUrl` / `localServerModel`, and every open bridge
+re-sends `init`. `init.edgeSettings` carries the same `edge.*` values as the seed
+script, so the page's local backend moves to the new port without a reload.
+An automatic start (IDE open, `BundledRuntimeStartup`) never overwrites a URL
+the user typed; **Stop** clears the URL only if it is still the runtime's own.
+The process tree is destroyed on dispose and by a JVM shutdown hook.
+
+To move to a newer llama.cpp build, change `LLAMA_CPP_BUILD` and every archive
+row in `RuntimeCatalog.kt` together, and keep the Eclipse plugin's copy in step:
+both read and write the same `~/.vegaduta` layout.
 
 ### Build & run
 

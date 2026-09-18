@@ -24,6 +24,14 @@
 // runs and knowledge search itself - before any request is built - and
 // ApiClient refuses them again as a backstop. privacy.state always says
 // enforced:true because both checks are on this side of the network.
+//
+// Bundled runtime (capabilities.localRuntime, ai.vegaduta.ide.runtime):
+// runtime.query / runtime.install / runtime.stop drive BundledRuntimeService,
+// and every state change it reports is forwarded as runtime.status. When the
+// runtime (re)writes the local-server settings - it started, or the person
+// stopped it - this bridge re-sends init, whose edgeSettings re-point the
+// page's local backend at the new address and whose hostLocalEngine follows.
+// Model downloads are allowed in Private Mode: they carry no user content.
 
 package ai.vegaduta.ide.toolwindow
 
@@ -49,6 +57,9 @@ import ai.vegaduta.ide.context.MissingContext
 import ai.vegaduta.ide.privacy.HostedOperation
 import ai.vegaduta.ide.privacy.PrivateModeBlockedException
 import ai.vegaduta.ide.privacy.PrivateModePolicy
+import ai.vegaduta.ide.runtime.BundledRuntimeListener
+import ai.vegaduta.ide.runtime.BundledRuntimeService
+import ai.vegaduta.ide.runtime.RuntimeStatusSnapshot
 import ai.vegaduta.ide.settings.VegadutaSettingsState
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.wm.ToolWindowManager
@@ -67,6 +78,7 @@ import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -98,13 +110,7 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
     // Initial text only - the webview replaces it through engine.status once
     // it has probed (handleEngineStatus). With no local server configured the
     // engine host is never started, so this first line is also the last one.
-    private val statusLabel = JBLabel(
-        if (VegadutaSettingsState.getInstance().localServerBaseUrlOrNull() != null) {
-            "On-device engine: probing the local server..."
-        } else {
-            "On-device engine: off - set a local inference server URL in Settings | Tools | VegaDuta"
-        }
-    ).apply {
+    private val statusLabel = JBLabel(initialEngineLine()).apply {
         border = BorderFactory.createEmptyBorder(4, 8, 4, 8)
     }
     // Shown only while Private Mode is on, above the engine line.
@@ -124,6 +130,15 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
     private val authListener = Runnable { onAuthChanged() }
     // Settings | Tools | VegaDuta, or another project's chat panel, flipped it.
     private val privacyListener = Runnable { onPrivacyChanged() }
+    // The bundled on-device runtime: forward its state, and re-init when it
+    // re-points the local-server settings.
+    private val runtimeListener = object : BundledRuntimeListener {
+        override fun statusChanged(status: RuntimeStatusSnapshot) {
+            if (!disposed.get()) post(status.toMessageJson())
+        }
+
+        override fun localServerSettingsChanged() = onLocalServerSettingsChanged()
+    }
 
     init {
         query.addHandler { raw ->
@@ -138,6 +153,7 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
         Disposer.register(this, query)
         service<TokenStore>().addAuthListener(authListener)
         VegadutaSettingsState.getInstance().addPrivacyListener(privacyListener)
+        service<BundledRuntimeService>().addListener(runtimeListener)
 
         val status = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -155,6 +171,7 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
         disposed.set(true)
         service<TokenStore>().removeAuthListener(authListener)
         VegadutaSettingsState.getInstance().removePrivacyListener(privacyListener)
+        service<BundledRuntimeService>().removeListener(runtimeListener)
         for (flag in activeChats.values) {
             flag.set(true)
         }
@@ -218,6 +235,16 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
             "sdlc.run" -> handleSdlcRun(msg)
             "ui.reveal" -> handleReveal(msg)
             "ui.popOut" -> popOut()
+            // Bundled runtime. Not gated by Private Mode: a model download
+            // carries none of the person's content (protocol.ts). install and
+            // stop only queue work - the service runs it as a background task.
+            "runtime.query" -> ApplicationManager.getApplication().executeOnPooledThread {
+                post(service<BundledRuntimeService>().status().toMessageJson())
+            }
+            "runtime.install" -> msg.str("modelId")?.let { service<BundledRuntimeService>().install(it) }
+            "runtime.stop" -> ApplicationManager.getApplication().executeOnPooledThread {
+                service<BundledRuntimeService>().stop()
+            }
             "knowledge.search" -> handleKnowledgeSearch(msg)
             "privacy.mode" -> msg["private"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()?.let { on ->
                 // The setter notifies every privacy listener, this bridge's
@@ -228,9 +255,9 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
             // which this host never sends: IDE completions run natively
             // (ai.vegaduta.ide.completions), not through the webview.
             // download.* is handled inside the shared chat app against its own
-            // engine host - and in JCEF its model panel reports "no WebGPU"
-            // and offers the local-server path instead of a download, so no
-            // download can start here in the first place.
+            // engine host - and in JCEF its WebLLM panel reports "no WebGPU",
+            // so no in-page download can start here. On-device downloads in
+            // this host are the bundled runtime's (runtime.install above).
         }
     }
 
@@ -378,6 +405,20 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
         post(privacyStateJson())
     }
 
+    /** The bundled runtime just rewrote localServerBaseUrl / localServerModel
+     * (it started, or the person stopped it). This is the plugin's only
+     * automatic re-init: re-send init so hostLocalEngine and edgeSettings
+     * follow the new address. Only once the page has booted - before that,
+     * the "ready" handshake sends a fresh init anyway, and delivering one
+     * early would mark the page ready before its receiver exists. */
+    private fun onLocalServerSettingsChanged() {
+        if (disposed.get()) return
+        ApplicationManager.getApplication().invokeLater {
+            if (!disposed.get()) statusLabel.text = initialEngineLine()
+        }
+        if (pageReady) sendInit()
+    }
+
     /** context.request -> context.result. Pooled thread: the collector waits
      * on the EDT for editor state and may read VCS revisions, neither of which
      * may block the CEF query handler this is called from. */
@@ -422,8 +463,11 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
                 put("auth", authJson())
                 put("agents", WireJson.encodeToJsonElement(ListSerializer(AgentSummary.serializer()), agents))
                 put("workflows", WireJson.encodeToJsonElement(ListSerializer(WorkflowSummary.serializer()), workflows))
-                // True once the user has pointed the plugin at a local
-                // inference server, and then for the local-HTTP backend ONLY
+                // True once a local inference server URL is set - typed by
+                // the user, filled in by Detect local server, or written by
+                // the bundled runtime when it starts (BundledRuntimeService;
+                // it re-sends this init then, see onLocalServerSettingsChanged)
+                // - and then for the local-HTTP backend ONLY
                 // (edge/ollamaEngine.ts - plain fetch at an OpenAI-compatible
                 // server, no WebGPU involved). WebLLM stays off: JCEF ships no
                 // WebGPU, and rather than leaning on that detection failing,
@@ -451,6 +495,12 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
                     "hostLocalEngine",
                     VegadutaSettingsState.getInstance().localServerBaseUrlOrNull() != null
                 )
+                // The same edge.* values the seed script wrote before the
+                // bundle booted, re-sent on every init so a re-init after the
+                // settings changed re-points the page's local backend (null
+                // removes a key: a stopped runtime leaves no stale URL).
+                // Applied by the chat app BEFORE it starts its engine host.
+                put("edgeSettings", edgeSettingsJson(includeRemovals = true))
                 // What this host really services (protocol.ts HostCapabilities).
                 // commitMessage: HostEditorOps.setCommitMessage fills the box
                 // captured by the commit-toolbar action, and otherwise copies
@@ -470,11 +520,17 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
                     put("knowledge", true)
                     put("privateMode", true)
                     put("popOut", true)
+                    // BundledRuntimeService: download + run llama-server with a
+                    // pinned GGUF model; answered with runtime.status.
+                    put("localRuntime", true)
                 }
             })
             // Tell the page the persisted Private Mode right after init, so a
             // freshly opened window matches what this host will enforce.
             post(privacyStateJson())
+            // And where the bundled runtime stands, so its panel needs no
+            // round trip to draw.
+            post(service<BundledRuntimeService>().status().toMessageJson())
         }
     }
 
@@ -648,7 +704,7 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
             state == "loading" -> "On-device engine: loading..."
             state == "idle" -> "On-device engine: available"
             baseUrl == null ->
-                "On-device engine: off - set a local inference server URL in Settings | Tools | VegaDuta"
+                "On-device engine: off - download a bundled model or set a local server in Settings | Tools | VegaDuta"
             // Interim wording, for the moment before the host's own probe
             // answers. It claims only what is certain right here: a URL is
             // configured and nothing served a model through the webview.
@@ -687,7 +743,7 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
                 LocalServerProbe.UNREACHABLE ->
                     "On-device engine: off - no local inference server answering at " + baseUrl
                 LocalServerProbe.NOT_CONFIGURED ->
-                    "On-device engine: off - set a local inference server URL in Settings | Tools | VegaDuta"
+                    "On-device engine: off - download a bundled model or set a local server in Settings | Tools | VegaDuta"
                 LocalServerProbe.NOT_PROBED ->
                     "On-device engine: off - could not reach a verdict on " + baseUrl
             }
@@ -793,17 +849,52 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
         return out
     }
 
+    /** The first line under the browser, before the webview reports. */
+    private fun initialEngineLine(): String =
+        if (VegadutaSettingsState.getInstance().localServerBaseUrlOrNull() != null) {
+            "On-device engine: probing the local server..."
+        } else {
+            "On-device engine: off - download a bundled model or set a local server in Settings | Tools | VegaDuta"
+        }
+
+    /** The edge.* kv values this host owns. Both the seed script (before the
+     * bundle boots) and every init's edgeSettings (after) are built from this,
+     * so the two can never disagree. edge.ollamaBaseUrl / edge.ollamaModel come
+     * from localServerBaseUrl / localServerModel - which the bundled runtime
+     * writes when it starts - so the page's local backend talks to whatever
+     * server the rest of the plugin talks to, bundled or the user's own.
+     * [includeRemovals] adds explicit nulls for unset keys (init only: the
+     * chat app removes a null key; the seed just skips it). */
+    private fun edgeSettingsJson(includeRemovals: Boolean): JsonObject {
+        val settings = VegadutaSettingsState.getInstance()
+        return buildJsonObject {
+            put("edge.apiBase", settings.apiBase())
+            put("edge.backend", "ollama")
+            put("edge.modelOverride", "hosted")
+            val url = settings.localServerBaseUrlOrNull()
+            val model = settings.localServerModelOrNull()
+            if (url != null) put("edge.ollamaBaseUrl", url) else if (includeRemovals) put("edge.ollamaBaseUrl", JsonNull)
+            if (model != null) put("edge.ollamaModel", model) else if (includeRemovals) put("edge.ollamaModel", JsonNull)
+        }
+    }
+
     /** Seeds the shared edge layer's preference store (EdgeKv, localStorage-
      * backed - clients/shared/src/edge/host.ts) BEFORE the app bundle runs.
      * Two jobs:
      *  - carry plugin settings into the page, which has no other way to read
-     *    them: chat/main.ts calls createEngineHost() with no config, so every
-     *    value comes from kv - edge.apiBase (webview/engineHost.ts) and
-     *    edge.ollamaBaseUrl / edge.ollamaModel (edge/ollamaEngine.ts);
+     *    them at boot: chat/main.ts calls createEngineHost() with no config,
+     *    so every value comes from kv - edge.apiBase (webview/engineHost.ts)
+     *    and edge.ollamaBaseUrl / edge.ollamaModel (edge/ollamaEngine.ts).
+     *    These are the SAME values init re-sends as edgeSettings
+     *    (edgeSettingsJson), so when the bundled runtime starts later and
+     *    rewrites the local-server settings, the re-sent init moves the
+     *    page's local backend to it without reloading the page;
      *  - keep WebLLM off deterministically. edge.modelOverride="hosted" makes
      *    webllmEngine.probe() return false before it detects capabilities or
      *    reports a downloadable model, and edge.backend="ollama" puts the
-     *    local-HTTP backend first in tryBackends()' probe order.
+     *    local-HTTP (OpenAI-compatible) backend - the one that talks to the
+     *    bundled llama-server as readily as to Ollama - first in
+     *    tryBackends()' probe order.
      *
      * The page is loaded through loadHTML(), which can land on an origin where
      * localStorage throws; createDefaultKv() would then fall back to an empty
@@ -811,14 +902,7 @@ class JcefBridge(private val project: Project) : Disposable, ChatSurface {
      * installed under the same name first. Every step is try/catch-ed: a page
      * that cannot store preferences must still boot. */
     private fun edgeSeedScript(): String {
-        val settings = VegadutaSettingsState.getInstance()
-        val seed = buildJsonObject {
-            put("edge.apiBase", settings.apiBase())
-            put("edge.backend", "ollama")
-            put("edge.modelOverride", "hosted")
-            settings.localServerBaseUrlOrNull()?.let { put("edge.ollamaBaseUrl", it) }
-            settings.localServerModelOrNull()?.let { put("edge.ollamaModel", it) }
-        }
+        val seed = edgeSettingsJson(includeRemovals = false)
         val js = """
             (function () {
               var seed = ${seed};

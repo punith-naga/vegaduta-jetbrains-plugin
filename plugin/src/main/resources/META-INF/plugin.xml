@@ -38,9 +38,14 @@
         </ul>
 
         <h3>Free and private: your own model server</h3>
-        <p>You don't need an account. Start an OpenAI-compatible server on your machine
-        (<a href="https://ollama.com">Ollama</a>, LM Studio or llama.cpp), then open
-        <b>Settings | Tools | VegaDuta</b> and click <b>Detect local server</b>. That gives you:</p>
+        <p>You don't need an account. The quickest way: open <b>Settings | Tools | VegaDuta</b>,
+        pick a model under <b>Bundled on-device model</b> and click <b>Download &amp; run</b>.
+        The plugin downloads the open-source llama.cpp server and a Qwen2.5 Coder model
+        (about 1.1 GB for the recommended one), checks both files against pinned
+        checksums, and runs the server on your computer. It starts again by itself the
+        next time you open the IDE. Or use a server you already run
+        (<a href="https://ollama.com">Ollama</a>, LM Studio or llama.cpp) and click
+        <b>Detect local server</b>. Either way you get:</p>
         <ul>
           <li><b>Code completions</b> from your model. Tick the box in Settings, then invoke
               basic completion twice (Ctrl+Space twice on Windows and Linux).</li>
@@ -49,8 +54,9 @@
           <li><b>On-device chat</b> in the tool window. The one-click actions above work
               signed out too, and every turn goes only to the server you configured.</li>
         </ul>
-        <p>The plugin does not download or run models inside the IDE. JetBrains' built-in
-        browser has no WebGPU, so "local" always means a server you started yourself.</p>
+        <p>JetBrains' built-in browser has no WebGPU, so models never run inside the chat
+        panel itself. "Local" always means a model server on your computer: the bundled
+        one, or one you started yourself.</p>
 
         <h3>Private Mode</h3>
         <p>Turn it on in the chat panel or in <b>Settings | Tools | VegaDuta</b>. While it is on,
@@ -70,6 +76,24 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.5.0</h3>
+        <ul>
+          <li><b>Free on-device AI, one click, no Ollama needed.</b> Pick a model (Qwen2.5
+              Coder 1.5B, 3B or 7B) and VegaDuta downloads it, verifies its checksum and runs
+              it on your machine with the bundled llama.cpp server. Chat, code completion and
+              the coding agent then work offline and free, and it starts by itself next time.
+              From the chat's "On-device" chip, or Settings &gt; Tools &gt; VegaDuta.</li>
+        </ul>
+        <h3>0.4.3</h3>
+        <ul>
+          <li>Fixed: the <b>VegaDuta Agent</b> tool window was an empty black panel until
+              the first run. It now explains what the coding agent does and what it needs,
+              with <b>Start a coding task</b> and <b>Set up your model</b> links and a start
+              button in its title bar.</li>
+          <li>Fixed: "On-device off" in the chat was a dead end. It now reads
+              "On-device: set up" and opens step-by-step setup for a free local model
+              (Ollama or LM Studio, then Settings &gt; Tools &gt; VegaDuta).</li>
+        </ul>
         <h3>0.4.1</h3>
         <ul>
           <li>Calmer, softer colours and gentler animation.</li>
@@ -175,6 +199,10 @@
                                  displayName="VegaDuta"
                                  instance="ai.vegaduta.ide.settings.VegadutaConfigurable"/>
         <notificationGroup id="VegaDuta" displayType="BALLOON"/>
+        <!-- Restarts the bundled on-device model (ai.vegaduta.ide.runtime) the
+             person last ran, once per IDE session, if it is fully downloaded.
+             Never downloads anything by itself. -->
+        <postStartupActivity implementation="ai.vegaduta.ide.runtime.BundledRuntimeStartup"/>
         <!-- On-device code completion against the user's own local inference
              server. Deliberately a completion.contributor and not the inline
              (ghost text) extension point - see the header comment of
@@ -233,6 +261,7 @@
                     description="Sign in to VegaDuta with the OAuth device flow"/>
             <action id="VegaDuta.StartCodingTask"
                     class="ai.vegaduta.ide.actions.StartCodingTaskAction"
+                    icon="AllIcons.Actions.Execute"
                     text="Start a Coding Task…"
                     description="Run a multi-step coding agent against this project using your own inference server or key"/>
             <action id="VegaDuta.RunWorkflow"

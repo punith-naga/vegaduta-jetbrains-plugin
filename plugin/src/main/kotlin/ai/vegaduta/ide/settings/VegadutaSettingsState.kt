@@ -49,6 +49,13 @@ class VegadutaSettingsState : PersistentStateComponent<VegadutaSettingsState.Sta
         // Private Mode (ai.vegaduta.ide.privacy). Persisted so it survives an
         // IDE restart: a user who turned it on must not find it silently off.
         var privateMode: Boolean = false
+        // Bundled on-device runtime (ai.vegaduta.ide.runtime). The model the
+        // person last started - blank = do not start anything when the IDE
+        // opens - and the loopback address the runtime last wrote into
+        // localServerBaseUrl, so it can tell its own address from one the user
+        // typed and never overwrite theirs.
+        var bundledRuntimeModel: String = ""
+        var bundledRuntimeBaseUrl: String = ""
     }
 
     // Not persisted: who wants to hear when Private Mode flips (every open
@@ -127,6 +134,18 @@ class VegadutaSettingsState : PersistentStateComponent<VegadutaSettingsState.Sta
         get() = state.agentAutoApproveCommands
         set(value) {
             state.agentAutoApproveCommands = value
+        }
+
+    var bundledRuntimeModel: String
+        get() = state.bundledRuntimeModel
+        set(value) {
+            state.bundledRuntimeModel = value
+        }
+
+    var bundledRuntimeBaseUrl: String
+        get() = state.bundledRuntimeBaseUrl
+        set(value) {
+            state.bundledRuntimeBaseUrl = value
         }
 
     /** Setting it (from the chat panel or Settings) notifies every
