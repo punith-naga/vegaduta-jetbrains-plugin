@@ -8,6 +8,7 @@ import ai.vegaduta.ide.api.AgentSummary
 import ai.vegaduta.ide.api.ApiClient
 import ai.vegaduta.ide.auth.DeviceFlowLoginService
 import ai.vegaduta.ide.auth.TokenStore
+import ai.vegaduta.ide.context.IdeContextCollector
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
@@ -48,6 +49,8 @@ class SwingChatPanel(private val project: Project) : Disposable, ChatSurface {
 
     private var sessionId: String? = null
     private val activeCancel = AtomicReference<AtomicBoolean?>(null)
+    /** Context a prefill attached, appended to the next message sent. */
+    private val pendingContext = AtomicReference<String?>(null)
 
     private val authListener = Runnable {
         ApplicationManager.getApplication().invokeLater {
@@ -109,6 +112,30 @@ class SwingChatPanel(private val project: Project) : Disposable, ChatSurface {
         }
     }
 
+    // The fallback surface has no attachment chips: the collected context is
+    // held here, named in the status line, and appended to the next message.
+    // It never auto-sends - the person reads the prompt and presses Enter.
+    override fun prefill(text: String, context: List<String>, send: Boolean) {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = if (context.isEmpty()) null else IdeContextCollector(project).collect(context)
+            val attached = result?.items.orEmpty()
+            pendingContext.set(
+                attached.takeIf { it.isNotEmpty() }?.joinToString("\n\n") { item ->
+                    "--- ${item.label}${if (item.truncated) " (truncated)" else ""} ---\n${item.text}"
+                }
+            )
+            val notes = buildList {
+                if (attached.isNotEmpty()) add("Attached: " + attached.joinToString(", ") { it.label })
+                result?.missing?.forEach { add("Not attached (${it.kind}): ${it.reason}") }
+            }
+            ApplicationManager.getApplication().invokeLater {
+                input.text = text
+                statusLabel.text = if (notes.isEmpty()) " " else "  " + notes.joinToString(" | ")
+                input.requestFocusInWindow()
+            }
+        }
+    }
+
     private fun refreshAuthUi() {
         val tokens = service<TokenStore>()
         val usable = tokens.isSignedIn() || tokens.apiKey() != null
@@ -152,10 +179,12 @@ class SwingChatPanel(private val project: Project) : Disposable, ChatSurface {
             appendOnEdt("\n[No agent selected - sign in and pick an agent.]\n")
             return
         }
-        val message = input.text.trim()
-        if (message.isEmpty()) return
+        val typed = input.text.trim()
+        if (typed.isEmpty()) return
         input.text = ""
-        appendOnEdt("You: $message\n\n${agent.name}: ")
+        val attachment = pendingContext.getAndSet(null)
+        val message = if (attachment != null) "$typed\n\n$attachment" else typed
+        appendOnEdt("You: $typed" + (if (attachment != null) " [+ attached context]" else "") + "\n\n${agent.name}: ")
 
         val cancelled = AtomicBoolean(false)
         activeCancel.set(cancelled)

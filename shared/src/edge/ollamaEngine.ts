@@ -168,6 +168,7 @@ export function createOllamaEngine(
             messages,
             stream: true,
             ...(req.maxTokens != null && req.maxTokens > 0 ? { max_tokens: req.maxTokens } : {}),
+            ...(req.includeUsage ? { stream_options: { include_usage: true } } : {}),
           }),
           signal: controller.signal,
         });
@@ -178,6 +179,7 @@ export function createOllamaEngine(
         const decoder = new TextDecoder();
         let buffer = "";
         let full = "";
+        let completionTokens: number | null = null;
         for (;;) {
           armIdle();
           const { done, value } = await reader.read();
@@ -196,7 +198,12 @@ export function createOllamaEngine(
             try {
               const parsed = JSON.parse(payload) as {
                 choices?: Array<{ delta?: { content?: unknown } }>;
+                usage?: { completion_tokens?: unknown } | null;
               };
+              const reported = parsed.usage?.completion_tokens;
+              if (typeof reported === "number" && Number.isFinite(reported) && reported > 0) {
+                completionTokens = reported;
+              }
               const delta = parsed.choices?.[0]?.delta?.content;
               if (typeof delta === "string" && delta) {
                 full += delta;
@@ -215,7 +222,13 @@ export function createOllamaEngine(
         }
         if (req.signal?.aborted) return failure("aborted");
         if (!full.trim()) return failure("empty-reply");
-        return { ok: true, text: full, modelId: model, backend: "ollama" };
+        return {
+          ok: true,
+          text: full,
+          modelId: model,
+          backend: "ollama",
+          ...(completionTokens != null ? { usage: { completionTokens } } : {}),
+        };
       } catch (err) {
         if (timedOut === "ceiling") return failure("turn-ceiling-exceeded");
         if (timedOut === "idle") {

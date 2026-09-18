@@ -1,0 +1,12 @@
+<!-- Loaded only when the IDE has the VCS module (optional depends in plugin.xml). -->
+<idea-plugin>
+    <actions>
+        <!-- The toolbar above the commit message box. Invoked here, the action
+             can see VcsDataKeys.COMMIT_MESSAGE_CONTROL and remembers it, so the
+             answer's "Use as commit message" fills that exact box. -->
+        <group id="VegaDuta.CommitMessageToolbar">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+            <reference ref="VegaDuta.GenerateCommitMessage"/>
+        </group>
+    </actions>
+</idea-plugin>

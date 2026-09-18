@@ -5,43 +5,66 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/api/client";
 import type { VegadutaClient } from "../src/api/client";
-import { STREAM_ERROR_MARKER, emitLine, streamAgentChat } from "../src/api/sse";
+import { STREAM_ERROR_MARKER, createSseEventReader, streamAgentChat } from "../src/api/sse";
 
 function collect(): { deltas: string[]; onChunk: (delta: string) => void } {
   const deltas: string[] = [];
   return { deltas, onChunk: (delta) => deltas.push(delta) };
 }
 
-describe("emitLine", () => {
-  it("strips exactly the 5-char data: prefix", () => {
+// One backend chunk is one EVENT (terminated by a blank line), not one line -
+// a payload with newlines arrives as several `data:` lines and must be
+// rejoined with LF. See src/api/sse.ts's header for the Spring framing this
+// mirrors.
+describe("createSseEventReader", () => {
+  function read(lines: string[]): string[] {
     const { deltas, onChunk } = collect();
-    emitLine("data:hello", onChunk);
-    expect(deltas).toEqual(["hello"]);
+    const reader = createSseEventReader(onChunk);
+    for (const line of lines) reader.consumeLine(line);
+    reader.flush();
+    return deltas;
+  }
+
+  it("strips exactly the 5-char data: prefix", () => {
+    expect(read(["data:hello", ""])).toEqual(["hello"]);
   });
 
   it("preserves a leading payload space (no 6th char eaten)", () => {
-    const { deltas, onChunk } = collect();
-    emitLine("data: hello", onChunk);
-    expect(deltas).toEqual([" hello"]);
+    expect(read(["data: hello", ""])).toEqual([" hello"]);
   });
 
   it("delivers the lone-space chunk: 'data: ' => ' '", () => {
-    const { deltas, onChunk } = collect();
-    emitLine("data: ", onChunk);
-    expect(deltas).toEqual([" "]);
+    expect(read(["data: ", ""])).toEqual([" "]);
   });
 
   it("forwards an empty payload as an empty string", () => {
-    const { deltas, onChunk } = collect();
-    emitLine("data:", onChunk);
-    expect(deltas).toEqual([""]);
+    expect(read(["data:", ""])).toEqual([""]);
+  });
+
+  it("rejoins one event's data lines with a newline", () => {
+    expect(read(["data:# Heading", "data:", "data:- one", "data:- two", ""]))
+      .toEqual(["# Heading\n\n- one\n- two"]);
+  });
+
+  it("keeps separate events separate", () => {
+    expect(read(["data:one", "", "data:two", ""])).toEqual(["one", "two"]);
+  });
+
+  it("flushes a final event the server never terminated", () => {
+    expect(read(["data:tail"])).toEqual(["tail"]);
+  });
+
+  it("tolerates CRLF line endings", () => {
+    expect(read(["data:a\r", "data:b\r", "\r"])).toEqual(["a\nb"]);
   });
 
   it("throws ApiError carrying the sentinel's suffix message", () => {
     const { onChunk } = collect();
+    const reader = createSseEventReader(onChunk);
     let caught: unknown;
     try {
-      emitLine(`data:${STREAM_ERROR_MARKER}Provider exploded`, onChunk);
+      reader.consumeLine(`data:${STREAM_ERROR_MARKER}Provider exploded`);
+      reader.flush();
     } catch (err) {
       caught = err;
     }
@@ -52,17 +75,13 @@ describe("emitLine", () => {
 
   it("throws a default message on a bare sentinel", () => {
     const { onChunk } = collect();
-    expect(() => emitLine(`data:${STREAM_ERROR_MARKER}`, onChunk)).toThrowError(
-      "The response was interrupted. Please try again."
-    );
+    const reader = createSseEventReader(onChunk);
+    reader.consumeLine(`data:${STREAM_ERROR_MARKER}`);
+    expect(() => reader.flush()).toThrowError("The response was interrupted. Please try again.");
   });
 
-  it("ignores non-data lines (comments, ids, events, blanks, wrong case)", () => {
-    const { deltas, onChunk } = collect();
-    for (const line of [": keep-alive", "id:1", "event:message", "", "Data:nope", "  data:x"]) {
-      emitLine(line, onChunk);
-    }
-    expect(deltas).toEqual([]);
+  it("ignores non-data lines (comments, ids, events, wrong case, indented)", () => {
+    expect(read([": keep-alive", "id:1", "event:message", "Data:nope", "  data:x", ""])).toEqual([]);
   });
 });
 
@@ -86,10 +105,10 @@ function fakeClient(response: Response): VegadutaClient {
 }
 
 describe("streamAgentChat", () => {
-  it("buffers lines across chunk boundaries and captures X-Session-Id", async () => {
+  it("buffers events across chunk boundaries and captures X-Session-Id", async () => {
     const { deltas, onChunk } = collect();
     const response = sseResponse(
-      ["data:Hel", "lo\ndata: \nda", "ta:world\n"],
+      ["data:Hel", "lo\n\ndata: \n\nda", "ta:world\n\n"],
       { "X-Session-Id": "sess-123" }
     );
     const result = await streamAgentChat(fakeClient(response), {
@@ -103,14 +122,14 @@ describe("streamAgentChat", () => {
 
   it("emits a final line that has no trailing newline", async () => {
     const { deltas, onChunk } = collect();
-    const response = sseResponse(["data:first\n", "data:tail"]);
+    const response = sseResponse(["data:first\n\n", "data:tail"]);
     await streamAgentChat(fakeClient(response), { agentId: "a1", message: "hi", onChunk });
     expect(deltas).toEqual(["first", "tail"]);
   });
 
   it("decodes multi-byte characters split across chunks", async () => {
     const { deltas, onChunk } = collect();
-    const bytes = new TextEncoder().encode("data:héllo\n");
+    const bytes = new TextEncoder().encode("data:héllo\n\n");
     const cut = 7; // splits the 2-byte é
     const response = sseResponse([bytes.slice(0, cut), bytes.slice(cut)]);
     await streamAgentChat(fakeClient(response), { agentId: "a1", message: "hi", onChunk });
@@ -120,8 +139,8 @@ describe("streamAgentChat", () => {
   it("rejects with the sentinel's message on a mid-stream failure", async () => {
     const { deltas, onChunk } = collect();
     const response = sseResponse([
-      "data:partial\n",
-      `data:${STREAM_ERROR_MARKER}Upstream provider timed out\n`,
+      "data:partial\n\n",
+      `data:${STREAM_ERROR_MARKER}Upstream provider timed out\n\n`,
     ]);
     await expect(
       streamAgentChat(fakeClient(response), { agentId: "a1", message: "hi", onChunk })
@@ -131,7 +150,7 @@ describe("streamAgentChat", () => {
 
   it("falls back to the caller's sessionId when no header is returned", async () => {
     const { onChunk } = collect();
-    const response = sseResponse(["data:ok\n"]);
+    const response = sseResponse(["data:ok\n\n"]);
     const result = await streamAgentChat(fakeClient(response), {
       agentId: "a1",
       message: "hi",

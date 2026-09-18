@@ -52,4 +52,20 @@ val WireJson: Json = Json {
     explicitNulls = false
 }
 
-class ApiException(val status: Int, message: String) : RuntimeException(message)
+/** Open so ai.vegaduta.ide.privacy.PrivateModeBlockedException can say "no
+ * request was made" (status 0) through the same catch blocks. */
+open class ApiException(val status: Int, message: String) : RuntimeException(message)
+
+/** One knowledge-base hit - protocol.ts KnowledgeHit, mapped from core's
+ * SearchResultResponse (id, source, chunkIndex, content, collectionId,
+ * distance, documentId). Every field but id/content is nullable on the wire
+ * contract so a sparse row still maps. */
+@Serializable
+data class KnowledgeHit(
+    val id: String,
+    val source: String? = null,
+    val content: String = "",
+    val collectionId: String? = null,
+    val documentId: String? = null,
+    val distance: Double? = null,
+)

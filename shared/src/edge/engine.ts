@@ -5,6 +5,7 @@
 // contract ported from web/app/lib/edge/codegen.ts: nothing here ever throws
 // to a caller - every failure is a { ok: false, reason } result.
 
+import type { ModelUseCase } from "./capabilities";
 import type { EdgeHost } from "./host";
 import { createOllamaEngine } from "./ollamaEngine";
 import { createWebLlmEngine } from "./webllmEngine";
@@ -36,6 +37,10 @@ export interface EngineGenerateSuccess {
   text: string;
   modelId: string;
   backend: string;
+  /** Token counts the engine itself reported - present only when the request
+   * asked for them (includeUsage) AND the backend answered. Absent means
+   * "unknown", never zero; callers estimate from characters instead. */
+  usage?: { completionTokens: number };
 }
 
 export type EngineGenerateResult = EngineGenerateSuccess | EdgeFailure;
@@ -52,6 +57,10 @@ export interface ChatHistoryMessage {
 export interface EngineGenerateRequest {
   system: string;
   prompt: string;
+  /** What this turn IS, so a backend that chooses between models can pick a
+   * code-trained one for code work. Backends that serve a single model (the
+   * local-server backend) ignore it. Default "chat". */
+  useCase?: ModelUseCase;
   /** Completion only: text after the cursor (fill-in style). */
   suffix?: string;
   maxTokens?: number;
@@ -59,6 +68,10 @@ export interface EngineGenerateRequest {
    * the model's context budget - the system + current prompt are irreducible. */
   history?: ChatHistoryMessage[];
   signal?: AbortSignal;
+  /** Ask the backend to report generated-token usage (OpenAI
+   * stream_options.include_usage). Only Machine Check sets it, so every
+   * other request stays byte-for-byte what it was. */
+  includeUsage?: boolean;
 }
 
 /** Mirrors webview/protocol.ts EngineStatus minus `backend` (the registry/

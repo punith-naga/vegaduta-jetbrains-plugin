@@ -2,28 +2,213 @@
     <id>ai.vegaduta.ide</id>
     <name>VegaDuta</name>
     <vendor url="https://vegaduta.ai">VegaDuta</vendor>
+    <!-- This <description> IS the JetBrains Marketplace listing. Every sentence
+         must stay true of the code in this directory. -->
     <description><![CDATA[
-        Chat with your VegaDuta tenant agents, run workflows, and send code
-        selections for explanation or refactoring - right from the IDE.
-        Sign in via the OAuth device flow (no ports, works over Remote/SSH),
-        or paste a scoped <code>vmcp_</code> API key for headless use.
+        <p><b>VegaDuta brings AI help into your IDE</b>: chat about your code, review your
+        uncommitted changes, draft commit messages, write tests and docs, and run a
+        coding agent on your project. Use it with a VegaDuta account, or completely
+        free with a model server you run on your own machine.</p>
+
+        <h3>What you can do</h3>
+        <ul>
+          <li><b>Chat with context.</b> The VegaDuta tool window (right-hand side) streams
+              answers from your VegaDuta agents. Attach the current file, your selection,
+              your uncommitted changes (diff), the current file's problems or your last 30
+              commits with one click. Each attachment is capped at 24,000 characters and
+              marked when it was cut.</li>
+          <li><b>Jump to the code.</b> When an answer points at lines in a project file, the
+              plugin opens the file and selects them. Paths outside the project are refused.</li>
+          <li><b>Team knowledge search.</b> Signed in, the chat can search your organisation's
+              VegaDuta knowledge base.</li>
+          <li><b>Review My Changes.</b> Sends your uncommitted diff for a review: real
+              problems first, with file and line.</li>
+          <li><b>Generate Commit Message.</b> Also on the toolbar above the commit message box.
+              When you pick <i>Use as commit message</i> on the answer, the plugin fills in the
+              box. It never commits for you.</li>
+          <li><b>Write Tests for Selection</b>, <b>Add Docs to Selection</b>,
+              <b>Explain Selection</b> and <b>Refactor Selection</b> from the editor's
+              right-click menu.</li>
+          <li><b>Use the answer.</b> Insert code at the cursor (replacing the selection, if
+              there is one), open it in a new scratch file, or copy it.</li>
+          <li><b>Start a Coding Task.</b> A multi-step agent that reads, searches, edits and
+              runs commands in your open project. It asks before every edit and every
+              command, and Ctrl+Z undoes its edits.</li>
+          <li><b>Run Workflow.</b> Start one of your VegaDuta workflows and watch its progress.</li>
+        </ul>
+
+        <h3>Free and private: your own model server</h3>
+        <p>You don't need an account. Start an OpenAI-compatible server on your machine
+        (<a href="https://ollama.com">Ollama</a>, LM Studio or llama.cpp), then open
+        <b>Settings | Tools | VegaDuta</b> and click <b>Detect local server</b>. That gives you:</p>
+        <ul>
+          <li><b>Code completions</b> from your model. Tick the box in Settings, then invoke
+              basic completion twice (Ctrl+Space twice on Windows and Linux).</li>
+          <li><b>Start a Coding Task</b>, which uses your model, or a provider you hold a key for.
+              The model must support tool calling (for example qwen2.5-coder, llama3.1 or devstral).</li>
+          <li><b>On-device chat</b> in the tool window. The one-click actions above work
+              signed out too, and every turn goes only to the server you configured.</li>
+        </ul>
+        <p>The plugin does not download or run models inside the IDE. JetBrains' built-in
+        browser has no WebGPU, so "local" always means a server you started yourself.</p>
+
+        <h3>Private Mode</h3>
+        <p>Turn it on in the chat panel or in <b>Settings | Tools | VegaDuta</b>. While it is on,
+        no prompt, code, attachment or search query leaves your machine: hosted chat, knowledge
+        search, the code sandbox, workflow runs and a coding agent pointed at a hosted provider
+        are blocked by the IDE before any request is made. Your own local model server still
+        works. Signing in and listing your agents and workflows still reach VegaDuta; they carry
+        none of your content.</p>
+
+        <h3>Sign in (for hosted agents and workflows)</h3>
+        <p>Choose <b>Tools | VegaDuta | Sign In&hellip;</b> and approve the code in your browser.
+        No local ports are opened, so it also works over Remote Development and SSH. Your session
+        is kept in the operating system's keychain. For headless use, you can instead paste a
+        scoped <code>vmcp_</code> API key from your administrator.</p>
+
+        <p><a href="https://vegaduta.ai">vegaduta.ai</a></p>
     ]]></description>
 
+    <change-notes><![CDATA[
+        <h3>0.4.1</h3>
+        <ul>
+          <li>Calmer, softer colours and gentler animation.</li>
+          <li>Panels no longer cut each other off: one drawer at a time, and the header,
+              account bar and message box always stay visible.</li>
+          <li>A small tool window arranges itself properly and offers
+              <b>Open in window</b> to give VegaDūta its own resizable window.</li>
+          <li>Recipes picked before sign-in are held and run once you sign in.</li>
+        </ul>
+        <h3>0.4.0</h3>
+        <ul>
+          <li><b>A redesigned tool window</b> with VegaDūta's own colours, real buttons and
+              an aligned sign-in bar. It follows the IDE's light or dark theme.</li>
+          <li><b>Always listening</b>: the message box never locks. A question asked before
+              you sign in is held and sent as soon as you do.</li>
+          <li><b>A home screen</b> with quick starts, "Try asking" prompts and recipes for
+              your role, available before sign-in.</li>
+          <li><b>Instant tools</b>: 18 offline utilities (JSON, JWT, regex, cron, timestamps,
+              test data, diff, hashes, Base64, UUIDs and more) that run inside the tool
+              window with no account and nothing sent anywhere.</li>
+        </ul>
+        <h3>0.3.1</h3>
+        <ul>
+          <li>Fixed: sign-in failed when the sign-in server rate-limited the
+              browser-approval check (HTTP 429). It now waits longer and keeps
+              going until the code expires, instead of giving up.</li>
+        </ul>
+        <h3>0.3.0</h3>
+        <ul>
+          <li><b>Context attachments in chat</b>: the current file, your selection,
+              your uncommitted diff (from any VCS the IDE manages, or <code>git diff HEAD</code>
+              when none is set up) and the current file's problems. Each attachment is
+              capped at 24,000 characters and marked when cut. Anything the IDE can't supply,
+              such as "nothing is selected", shows the reason instead of an empty attachment.</li>
+          <li><b>New actions</b> in Tools | VegaDuta and the editor's right-click menu:
+              Review My Changes, Generate Commit Message, Write Tests for Selection and
+              Add Docs to Selection. They work signed in, and signed out with your own
+              model server.</li>
+          <li><b>Generate Commit Message with VegaDuta</b> in the commit message toolbar.
+              <i>Use as commit message</i> fills in that box. If the box isn't available,
+              the message is copied to the clipboard and a notification tells you.</li>
+          <li><b>Open in new file</b> opens an answer in a scratch file. <b>Insert</b> now
+              replaces the selection, if there is one. With no editor open, or a read-only file,
+              it copies the code and tells you, instead of doing nothing.</li>
+          <li>The tool window gets its settings before it handles an action, so an action
+              that opens the window for the first time no longer arrives too early.</li>
+          <li><b>Recent commits</b> attachment: the last 30 commits (hash, date, author name,
+              subject and body, no e-mail addresses) from <code>git log</code>, for commit
+              messages in your team's style, release notes and standups.</li>
+          <li><b>Jump to the code</b>: answers that point at lines in a project file open it
+              with those lines selected. Paths outside the project folder, including through
+              symbolic links, are refused.</li>
+          <li><b>Team knowledge search</b> for signed-in users (not API keys). The search runs
+              from the IDE; the chat page never holds your token.</li>
+          <li><b>Private Mode</b>, in the chat panel and in Settings, remembered across restarts:
+              no prompt, code, attachment or search query leaves your machine. Hosted chat,
+              knowledge search, the code sandbox, workflow runs and a non-local coding-agent
+              endpoint are blocked; your own local model server still works.</li>
+        </ul>
+        <h3>0.2.1</h3>
+        <ul>
+          <li>Fixed: multi-line replies lost every newline. One backend chunk is
+              one SSE <i>event</i>, not one line - the reader now rejoins an
+              event's data lines. Worst on the Planned / Careful / Rigorous
+              reasoning depths, where the whole answer is a single event.</li>
+        </ul>
+        <h3>0.2.0</h3>
+        <ul>
+          <li><b>Start a Coding Task</b>: a multi-step agent that reads, searches,
+              edits and runs commands in the open project against your own
+              OpenAI-compatible server. Edits go through the IDE's undo stack;
+              every edit and every command asks first.</li>
+          <li>Local inference for the first time: code completions from an
+              Ollama / LM Studio / llama.cpp server you run, configured under
+              Settings | Tools | VegaDuta. No account needed.</li>
+          <li>Fixed: multi-line agent replies (Planned / Careful / Rigorous
+              reasoning depths) arrived with every newline stripped.</li>
+        </ul>
+        <h3>0.1.0</h3>
+        <ul><li>Initial release: agent chat, workflow runs, explain/refactor selection.</li></ul>
+    ]]></change-notes>
+
     <depends>com.intellij.modules.platform</depends>
+    <!-- Only the commit-message toolbar button lives here. Everything else
+         (including the diff context, which falls back to `git diff HEAD`)
+         works in an IDE without the VCS module. -->
+    <depends optional="true" config-file="vegaduta-vcs.xml">com.intellij.modules.vcs</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="VegaDuta"
                     anchor="right"
                     factoryClass="ai.vegaduta.ide.toolwindow.ChatToolWindowFactory"
-                    icon="AllIcons.Toolwindows.WebToolWindow"/>
+                    icon="/icons/vegaduta.svg"/>
+        <!-- The coding agent's trace. Bottom, next to Run/Terminal, because
+             that is where the output it resembles already lives. -->
+        <toolWindow id="VegaDuta Agent"
+                    anchor="bottom"
+                    canCloseContents="false"
+                    factoryClass="ai.vegaduta.ide.toolwindow.AgentConsoleToolWindowFactory"
+                    icon="/icons/vegaduta.svg"/>
         <applicationConfigurable parentId="tools"
                                  id="ai.vegaduta.ide.settings"
                                  displayName="VegaDuta"
                                  instance="ai.vegaduta.ide.settings.VegadutaConfigurable"/>
         <notificationGroup id="VegaDuta" displayType="BALLOON"/>
+        <!-- On-device code completion against the user's own local inference
+             server. Deliberately a completion.contributor and not the inline
+             (ghost text) extension point - see the header comment of
+             VegadutaCompletionContributor.kt for why, given sinceBuild 242.
+             order="last" so the language's own results reach the popup first
+             and the local model's answer is appended when it arrives; the
+             contributor itself does nothing at all unless the user has
+             configured a server and ticked the box. -->
+        <completion.contributor language="any"
+                                order="last"
+                                implementationClass="ai.vegaduta.ide.completions.VegadutaCompletionContributor"/>
     </extensions>
 
     <actions>
+        <!-- Defined standalone so the editor popup, the Tools menu and (in
+             vegaduta-vcs.xml) the commit-message toolbar can all reference them. -->
+        <action id="VegaDuta.ReviewChanges"
+                class="ai.vegaduta.ide.actions.ReviewChangesAction"
+                text="Review My Changes"
+                description="Send your uncommitted changes (diff) to VegaDuta for a code review"/>
+        <action id="VegaDuta.GenerateCommitMessage"
+                class="ai.vegaduta.ide.actions.GenerateCommitMessageAction"
+                icon="/icons/vegaduta.svg"
+                text="Generate Commit Message with VegaDuta"
+                description="Draft a commit message from your uncommitted changes; 'Use as commit message' fills the commit box"/>
+        <action id="VegaDuta.WriteTests"
+                class="ai.vegaduta.ide.actions.WriteTestsAction"
+                text="Write Tests for Selection"
+                description="Ask VegaDuta to write unit tests for the selected code"/>
+        <action id="VegaDuta.AddDocs"
+                class="ai.vegaduta.ide.actions.AddDocsAction"
+                text="Add Docs to Selection"
+                description="Ask VegaDuta to add documentation comments to the selected code"/>
+
         <group id="VegaDuta.EditorPopup" text="VegaDuta" popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <action id="VegaDuta.ExplainSelection"
@@ -34,6 +219,11 @@
                     class="ai.vegaduta.ide.actions.RefactorSelectionAction"
                     text="Refactor Selection"
                     description="Ask a VegaDuta agent to refactor the selected code"/>
+            <reference ref="VegaDuta.WriteTests"/>
+            <reference ref="VegaDuta.AddDocs"/>
+            <separator/>
+            <reference ref="VegaDuta.ReviewChanges"/>
+            <reference ref="VegaDuta.GenerateCommitMessage"/>
         </group>
         <group id="VegaDuta.ToolsMenu" text="VegaDuta" popup="true">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
@@ -41,13 +231,22 @@
                     class="ai.vegaduta.ide.actions.SignInAction"
                     text="Sign In…"
                     description="Sign in to VegaDuta with the OAuth device flow"/>
+            <action id="VegaDuta.StartCodingTask"
+                    class="ai.vegaduta.ide.actions.StartCodingTaskAction"
+                    text="Start a Coding Task…"
+                    description="Run a multi-step coding agent against this project using your own inference server or key"/>
             <action id="VegaDuta.RunWorkflow"
                     class="ai.vegaduta.ide.actions.RunWorkflowAction"
                     text="Run Workflow…"
                     description="Pick a VegaDuta workflow, run it, and watch progress"/>
             <separator/>
+            <reference ref="VegaDuta.ReviewChanges"/>
+            <reference ref="VegaDuta.GenerateCommitMessage"/>
+            <separator/>
             <reference ref="VegaDuta.ExplainSelection"/>
             <reference ref="VegaDuta.RefactorSelection"/>
+            <reference ref="VegaDuta.WriteTests"/>
+            <reference ref="VegaDuta.AddDocs"/>
         </group>
     </actions>
 </idea-plugin>

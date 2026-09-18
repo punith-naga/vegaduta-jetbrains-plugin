@@ -153,7 +153,18 @@ export interface ManifestModel {
    * the WebLLM backend then falls back to the installed engine record, else a
    * conservative 4096. */
   contextWindowSize?: number | null;
+  /** What this model is TRAINED for, when the catalog knows. "code" marks a
+   * code-trained model (Qwen2.5-Coder and friends): in an IDE/browser plugin
+   * a 3B coder beats a 7B generalist at completions, fix and refactor, and
+   * that is a selection fact, not a label. Optional and tolerant - a manifest
+   * that carries none (every server manifest predating this field) degrades
+   * to the previous size/speed-only rules, unchanged. */
+  useCases?: ModelUseCase[];
 }
+
+/** Task classes the selector can match a model to. "chat" is the default
+ * everything falls back to; "code" is the completions / fix / refactor path. */
+export type ModelUseCase = "chat" | "code";
 
 export interface ModelManifest {
   version: string;
@@ -197,6 +208,28 @@ function coerceTier(v: unknown): 0 | 1 | 2 | null {
   return null;
 }
 
+/** Ids whose model IS code-trained, by name, when the manifest does not say
+ * so itself. Server manifests predate `useCases`, so without this every
+ * catalog served today would look use-case-less and the code path would lose
+ * the coder model it can see in the list. Matching is on the published model
+ * family in the id - the same verbatim-ids rule the rest of this layer uses,
+ * never a guess about an id the engine does not serve. */
+const CODE_MODEL_ID_PATTERN = /(^|[-_])(qwen[\d.]*-coder|coder|codellama|codegemma|starcoder|deepseek-coder)/i;
+
+/** Tolerant use-case read: an explicit array wins, a single string is
+ * accepted, anything unusable falls back to the id-derived answer. Every
+ * model is usable for chat, so "chat" is always present. */
+function coerceUseCases(raw: unknown, id: string): ModelUseCase[] {
+  const out = new Set<ModelUseCase>();
+  const values = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+  for (const v of values) {
+    if (v === "code" || v === "chat") out.add(v);
+  }
+  if (out.size === 0 && CODE_MODEL_ID_PATTERN.test(id)) out.add("code");
+  out.add("chat");
+  return [...out];
+}
+
 /**
  * Coerce a raw /api/edge/manifest payload into the canonical ModelManifest,
  * or null when it isn't manifest-shaped at all. Schema drift must DEGRADE,
@@ -236,6 +269,7 @@ export function normalizeManifest(raw: unknown): ModelManifest | null {
       sha256: coerceString(e.sha256),
       speedTier: coerceSpeedTier(e.speedTier ?? e.speed_tier),
       contextWindowSize: coerceContextWindowSize(e.contextWindowSize ?? e.context_window_size),
+      useCases: coerceUseCases(e.useCases ?? e.use_cases, id),
     });
   }
   const versionRaw = obj.version;
@@ -310,7 +344,12 @@ export function selectBestModel(
   manifest: ModelManifest | null,
   caps: EdgeCapabilities,
   userOverride?: ModelOverride | null,
-  turnComplexity: TurnComplexity = "simple"
+  turnComplexity: TurnComplexity = "simple",
+  /** What the turn is: "code" restricts auto-selection to code-trained models
+   * when the catalog has one that fits (a 3B coder beats a 7B generalist at
+   * completions/fix/refactor), and falls through to the normal rules when it
+   * does not. A user pin still always wins. */
+  useCase: ModelUseCase = "chat"
 ): ModelSelection {
   const override = userOverride ?? "auto";
   if (override === "hosted") {
@@ -323,7 +362,12 @@ export function selectBestModel(
     }
     // Pinned model vanished from the manifest - fall back to auto scoring.
   }
-  const fitting = (manifest?.models || []).filter((m) => modelFits(m, caps));
+  const allFitting = (manifest?.models || []).filter((m) => modelFits(m, caps));
+  // Code turns prefer code-trained models, but never at the cost of having
+  // NO model: an empty coder set falls straight through to the full list.
+  const specialised =
+    useCase === "code" ? allFitting.filter((m) => m.useCases?.includes("code")) : [];
+  const fitting = specialised.length > 0 ? specialised : allFitting;
   if (fitting.length === 0) {
     return { source: "auto", kind: "hosted", model: null, fits: true };
   }

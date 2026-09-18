@@ -59,10 +59,15 @@ async function postForm(url: string, form: Record<string, string>): Promise<Resp
   });
 }
 
+/** OidcError.code for an HTTP 429 from the token endpoint. */
+export const RATE_LIMITED = "rate_limited";
+
 export class OidcError extends Error {
   constructor(
     public readonly code: string,
-    description: string
+    description: string,
+    /** Set on HTTP 429: the server's Retry-After in ms, when it sent one. */
+    public readonly retryAfterMs?: number
   ) {
     super(description);
     this.name = "OidcError";
@@ -80,6 +85,17 @@ async function tokenRequest(
     expires_in?: number;
   };
   if (!response.ok || !json.access_token) {
+    // HTTP 429 is its own code: auth.vegaduta.ai is behind Cloudflare, whose
+    // rate limiting answers with an HTML page (no OAuth error body), and the
+    // device-flow poller must be able to tell "slow down" from "failed".
+    if (response.status === 429) {
+      const retryAfterSec = Number(response.headers.get("retry-after"));
+      throw new OidcError(
+        RATE_LIMITED,
+        "The sign-in server is rate-limiting requests from this network.",
+        Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? retryAfterSec * 1000 : undefined
+      );
+    }
     throw new OidcError(
       json.error ?? String(response.status),
       json.error_description ?? json.error ?? `Token request failed (${response.status})`

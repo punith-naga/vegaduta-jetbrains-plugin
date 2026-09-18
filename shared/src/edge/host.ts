@@ -20,7 +20,7 @@ export interface EdgeHost {
   getToken(): Promise<string | null>;
   /** Preference/marker store (replaces web's raw localStorage use). */
   kv: EdgeKv;
-  platform: "vscode" | "chrome" | "jetbrains";
+  platform: "vscode" | "chrome" | "jetbrains" | "eclipse";
 }
 
 /** localStorage-backed EdgeKv when the environment has one (webviews do),

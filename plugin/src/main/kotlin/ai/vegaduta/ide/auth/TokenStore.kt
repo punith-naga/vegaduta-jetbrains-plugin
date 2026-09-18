@@ -34,6 +34,13 @@ private const val SERVICE_NAME = "VegaDuta IDE"
 private const val KEY_REFRESH_TOKEN = "refresh-token"
 private const val KEY_API_KEY = "api-key"
 
+/** The coding agent's BYOK key for a third-party OpenAI-compatible provider.
+ * A separate slot on purpose: it is NOT a VegaDuta credential and must never
+ * reach bearerToken(), which would send a user's Groq/OpenAI key to the
+ * platform. It is here rather than in settings because settings sync between
+ * machines and appear in screen shares. */
+private const val KEY_AGENT_API_KEY = "agent-api-key"
+
 @Service(Service.Level.APP)
 class TokenStore {
     private val log = logger<TokenStore>()
@@ -160,6 +167,19 @@ class TokenStore {
         val value = key?.trim()?.takeIf { it.isNotBlank() }
         PasswordSafe.instance.set(attributes(KEY_API_KEY), value?.let { Credentials(KEY_API_KEY, it) })
         fireAuthChanged()
+    }
+
+    /** The coding agent's provider key, or null. Read only by the agent's model
+     * adapter; no VegaDuta call ever sees it. */
+    fun agentApiKey(): String? =
+        PasswordSafe.instance.getPassword(attributes(KEY_AGENT_API_KEY))?.takeIf { it.isNotBlank() }
+
+    /** Null or blank clears it - a local server needs no key, so clearing has to
+     * be as easy as setting. No auth listeners fire: this key has nothing to do
+     * with whether the user is signed in to VegaDuta. */
+    fun setAgentApiKey(key: String?) {
+        val value = key?.trim()?.takeIf { it.isNotBlank() }
+        PasswordSafe.instance.set(attributes(KEY_AGENT_API_KEY), value?.let { Credentials(KEY_AGENT_API_KEY, it) })
     }
 
     private fun fireAuthChanged() {

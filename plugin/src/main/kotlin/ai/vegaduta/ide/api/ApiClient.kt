@@ -9,6 +9,8 @@
 package ai.vegaduta.ide.api
 
 import ai.vegaduta.ide.auth.TokenStore
+import ai.vegaduta.ide.privacy.HostedOperation
+import ai.vegaduta.ide.privacy.PrivateModePolicy
 import ai.vegaduta.ide.settings.VegadutaSettingsState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -55,6 +57,12 @@ class ApiClient {
         .build()
 
     private fun apiBase(): String = VegadutaSettingsState.getInstance().apiBase().trimEnd('/')
+
+    /** Private Mode backstop (ai.vegaduta.ide.privacy): every method below
+     * that sends the user's content calls this BEFORE building a request, so
+     * no caller - bridge, Swing panel or action - can get round it. */
+    private fun requireHostedAllowed(operation: HostedOperation) =
+        PrivateModePolicy.check(VegadutaSettingsState.getInstance().privateMode, operation)
 
     /** vmcp_ keys only authenticate the /api/dev/v1 surface; the path shapes
      * are otherwise identical, so API-key mode is a prefix swap. */
@@ -132,6 +140,7 @@ class ApiClient {
         )
 
     fun runWorkflow(workflowId: String, input: String): WorkflowRun {
+        requireHostedAllowed(HostedOperation.WORKFLOW_RUN)
         val body = buildJsonObject { put("input", input) }.toString()
         return WireJson.decodeFromString(
             WorkflowRun.serializer(),
@@ -167,6 +176,7 @@ class ApiClient {
         onSessionId: (String?) -> Unit,
         onChunk: (String) -> Unit,
     ) {
+        requireHostedAllowed(HostedOperation.CHAT)
         val tokens = service<TokenStore>()
         if (!tokens.isSignedIn() && tokens.apiKey() != null) {
             // dev/v1 has no streaming surface - deliver the blocking reply as one chunk.
@@ -226,21 +236,17 @@ class ApiClient {
                 }
             }.apply { isDaemon = true; start() }
             try {
+                val events = SseEventReader(onChunk)
                 while (iterator.hasNext()) {
                     if (cancelled.get()) {
                         return
                     }
-                    val line = iterator.next()
-                    if (!line.startsWith("data:")) {
-                        continue // comments / blank keep-alives
-                    }
-                    val delta = line.substring(5)
-                    if (delta.startsWith(STREAM_ERROR_MARKER)) {
-                        val detail = delta.substring(STREAM_ERROR_MARKER.length)
-                        throw ApiException(0, detail.ifBlank { "The response was interrupted. Please try again." })
-                    }
-                    onChunk(delta)
+                    events.consumeLine(iterator.next())
                 }
+                // A stream that ends without a trailing blank line still has a
+                // complete event buffered - emit it rather than dropping the
+                // last (often whole) reply.
+                events.flush()
             } catch (e: Exception) {
                 // A cancellation-triggered lines.close() surfaces here as some
                 // flavor of IOException from the blocked read - treat it as the
@@ -261,6 +267,7 @@ class ApiClient {
      * user gets a clear ApiException instead of a confusing 404.
      */
     fun runCode(code: String, language: String, timeoutSeconds: Int? = null): RunCodeResult {
+        requireHostedAllowed(HostedOperation.SANDBOX_RUN)
         val tokens = service<TokenStore>()
         if (!tokens.isSignedIn()) {
             throw ApiException(0, "Running code in a sandbox needs a full sign-in (not an API key) - Tools > VegaDuta > Sign In.")
@@ -277,6 +284,22 @@ class ApiClient {
             exitCode = obj["exitCode"]?.jsonPrimitive?.int ?: -1,
             timedOut = obj["timedOut"]?.jsonPrimitive?.boolean ?: false,
         )
+    }
+
+    /**
+     * POST /api/knowledge/search - the tenant's knowledge base. JWT surface
+     * only: the vmcp_ dev/v1 surface has no knowledge routes, so an
+     * API-key-only user gets status 401 ("signed-out") without a request.
+     * Throws IllegalArgumentException for a blank query.
+     */
+    fun searchKnowledge(query: String, topK: Int?, collectionIds: List<String>?): List<KnowledgeHit> {
+        requireHostedAllowed(HostedOperation.KNOWLEDGE_SEARCH)
+        if (!service<TokenStore>().isSignedIn()) {
+            throw ApiException(401, "Knowledge search needs a full sign-in (not an API key) - Tools > VegaDuta > Sign In.")
+        }
+        val body = knowledgeSearchBody(query, topK, collectionIds)
+            ?: throw IllegalArgumentException("Type something to search for.")
+        return parseKnowledgeHits(okBody(send("/api/knowledge/search", "POST", body.toString())))
     }
 
     /** Blocking POST /api/dev/v1/agents/{id}/chat -> (reply, sessionId). */

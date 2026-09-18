@@ -102,6 +102,7 @@ export async function completeCode(
     const { result, deadlineHit } = await withSoftDeadline(
       (signal) =>
         engine.generate({
+          useCase: "code",
           system: completionSystemPrompt(req.languageId),
           prompt: req.prefix,
           suffix: req.suffix,

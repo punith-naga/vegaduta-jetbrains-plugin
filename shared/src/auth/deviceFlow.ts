@@ -6,7 +6,7 @@
 //   2. pollForTokens() -> resolves once the user approves in the browser.
 
 import { IDE_CLIENT_ID } from "../api/types";
-import { OIDC_SCOPE, OidcError, oidcEndpoints, tokenRequest, type TokenSet } from "./oidc";
+import { OIDC_SCOPE, OidcError, oidcEndpoints, tokenRequest, type TokenSet, RATE_LIMITED } from "./oidc";
 
 export interface DeviceAuthorization {
   deviceCode: string;
@@ -58,6 +58,9 @@ export async function startDeviceFlow(
 
 /** Polls the token endpoint until approval, denial, expiry, or abort.
  * Honors RFC 8628 `authorization_pending` / `slow_down` responses. */
+/** Longest wait between polls after the server has asked us to slow down. */
+const MAX_POLL_INTERVAL_MS = 60_000;
+
 export async function pollForTokens(
   authBase: string,
   authorization: DeviceAuthorization,
@@ -84,7 +87,21 @@ export async function pollForTokens(
           continue;
         }
         if (err.code === "slow_down") {
-          intervalMs += 5000;
+          intervalMs = Math.min(MAX_POLL_INTERVAL_MS, intervalMs + 5000);
+          continue;
+        }
+        // A 429 from the rate-limiting edge is the same request as slow_down.
+        // Found 2026-09-18: Cloudflare in front of auth.vegaduta.ai 429s
+        // repeated token polls and, if they continue, BANS THE IP (error 1015)
+        // - including the browser page the person is approving the code on.
+        // So back off hard (Retry-After, else max(+5s, x2), capped) and keep
+        // waiting until the code expires, rather than failing the sign-in or
+        // hammering the edge into a ban.
+        if (err.code === RATE_LIMITED) {
+          intervalMs = Math.min(
+            MAX_POLL_INTERVAL_MS,
+            err.retryAfterMs ?? Math.max(intervalMs + 5000, intervalMs * 2)
+          );
           continue;
         }
       }

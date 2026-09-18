@@ -5,7 +5,7 @@
 // the selection-sized fast path that should never need the hosted platform.
 
 import { stripFence, withSoftDeadline } from "./completions";
-import type { EdgeFailure, LocalEngine } from "./engine";
+import type { ChatHistoryMessage, EdgeFailure, LocalEngine } from "./engine";
 
 export type QuickActionKind = "explain" | "fix" | "refactor" | "chat";
 
@@ -15,6 +15,9 @@ export interface QuickActionRequest {
   languageId?: string;
   /** chat only: overrides the default assistant prompt. */
   systemPrompt?: string;
+  /** chat only: prior turns. The engine windows these oldest-first against
+   * the model's context budget; the current message is never trimmed. */
+  history?: ChatHistoryMessage[];
   maxTokens?: number;
   /** Soft deadline - same semantics as completions.ts. */
   deadlineMs?: number;
@@ -102,6 +105,10 @@ export async function runQuickAction(
             system,
             prompt: userPromptFor(kind, req),
             maxTokens: req.maxTokens,
+            history: kind === "chat" ? req.history : undefined,
+            // Everything but free chat is a turn ABOUT code, so a
+            // code-trained model is the right pick when one is available.
+            useCase: kind === "chat" ? "chat" : "code",
             signal,
           },
           codeOutput ? undefined : onDelta

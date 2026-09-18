@@ -6,6 +6,9 @@
 package ai.vegaduta.ide.actions
 
 import ai.vegaduta.ide.api.ApiClient
+import ai.vegaduta.ide.privacy.HostedOperation
+import ai.vegaduta.ide.privacy.PrivateModePolicy
+import ai.vegaduta.ide.settings.VegadutaSettingsState
 import ai.vegaduta.ide.api.TERMINAL_RUN_STATUSES
 import ai.vegaduta.ide.api.WorkflowSummary
 import com.intellij.notification.NotificationGroupManager
@@ -25,6 +28,12 @@ class RunWorkflowAction : AnAction(), DumbAware {
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
+        // Private Mode: say so up front instead of asking for input that
+        // ApiClient.runWorkflow would then refuse to send.
+        PrivateModePolicy.blockReason(VegadutaSettingsState.getInstance().privateMode, HostedOperation.WORKFLOW_RUN)?.let {
+            notify(project, it, NotificationType.WARNING)
+            return
+        }
         object : Task.Backgroundable(project, "Loading VegaDuta workflows", true) {
             private var workflows: List<WorkflowSummary> = emptyList()
 

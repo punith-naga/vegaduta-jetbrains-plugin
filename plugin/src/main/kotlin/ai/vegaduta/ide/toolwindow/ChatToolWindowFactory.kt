@@ -19,6 +19,11 @@ const val TOOL_WINDOW_ID = "VegaDuta"
 /** What editor actions need from whichever chat surface is active. */
 interface ChatSurface {
     fun sendSelection(text: String, languageId: String?, fileName: String?)
+
+    /** ui.prefill: stage [text] in the composer, attach the listed context
+     * kinds ("file" | "selection" | "diff" | "diagnostics"), and submit once
+     * they arrive when [send] is true. */
+    fun prefill(text: String, context: List<String>, send: Boolean)
 }
 
 /** Lets actions reach the active surface without holding UI references themselves. */

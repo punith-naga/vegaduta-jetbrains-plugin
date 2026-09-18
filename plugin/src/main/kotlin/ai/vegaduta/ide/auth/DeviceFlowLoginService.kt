@@ -78,7 +78,7 @@ class DeviceFlowLoginService {
             throw ApiException(
                 start.statusCode(),
                 startBody.str("error_description")
-                    ?: "Could not start device sign-in. Check that the agentic-ai-ide client exists on this Keycloak (docs/IDE-PLUGIN-PLATFORM-CONTRACT-2026-08-08.md)."
+                    ?: "Could not start device sign-in. Check that the agentic-ai-ide client exists on this Keycloak (docs/IDE-PLUGIN-PLATFORM-CONTRACT-2026-08-09.md)."
             )
         }
         val verificationUri = startBody.str("verification_uri_complete")
@@ -110,10 +110,20 @@ class DeviceFlowLoginService {
                 service<TokenStore>().storeTokenResponse(poll.body())
                 return
             }
+            // Checked BEFORE parsing: a 429 comes from the rate-limiting edge
+            // with an HTML body, not an OAuth error - see DevicePollBackoff.
+            if (poll.statusCode() == 429) {
+                intervalMs = DevicePollBackoff.afterRateLimited(
+                    intervalMs,
+                    poll.headers().firstValue("Retry-After").orElse(null)
+                )
+                indicator.text = "The sign-in server asked us to slow down - waiting ${intervalMs / 1000}s (code $userCode)…"
+                continue
+            }
             val body = parse(poll.body())
             when (body.str("error")) {
                 "authorization_pending" -> continue
-                "slow_down" -> intervalMs += 5000 // RFC 8628 §3.5
+                "slow_down" -> intervalMs = DevicePollBackoff.afterSlowDown(intervalMs) // RFC 8628 §3.5
                 "expired_token" -> throw ApiException(0, "The sign-in code expired. Please start again.")
                 "access_denied" -> throw ApiException(0, "Sign-in was denied in the browser.")
                 else -> throw ApiException(

@@ -32,6 +32,7 @@ import {
   selectBestModel,
   type EdgeCapabilities,
   type ManifestModel,
+  type ModelUseCase,
 } from "./capabilities";
 import type {
   EdgeFailure,
@@ -168,13 +169,35 @@ const GENERATION_POLL_MS = 50;
 
 /** kv marker prefix - set only after a model fully loaded once here. Same key
  * shape as web's localStorage marker so a Chrome side panel upgraded from a
- * web-profile install stays consistent. */
-const CACHED_KEY_PREFIX = "edge.tier1.cached.";
+ * web-profile install stays consistent. Exported so hosts never re-declare
+ * it (the Chrome side panel used to carry a "keep in sync" copy). */
+export const CACHED_KEY_PREFIX = "edge.tier1.cached.";
 
 /** Where @mlc-ai/web-llm keeps model weights (Cache API, its default
  * backend); tensor-cache.json lists every shard a complete download must
  * have. Verified against the installed 0.2.84 package by the original. */
-const WEBLLM_MODEL_CACHE_SCOPE = "webllm/model";
+export const WEBLLM_MODEL_CACHE_SCOPE = "webllm/model";
+
+/** Best-effort purge of one model's cached shards. Clears the readiness
+ * marker FIRST so a half-purged set can never be mistaken for a complete
+ * one (the tensor-index verification treats an incomplete set as absent
+ * anyway - belt and braces). Never rejects. */
+export async function purgeModelWeights(kv: { set(k: string, v: string): void }, modelId: string): Promise<void> {
+  try {
+    kv.set(CACHED_KEY_PREFIX + modelId, "0");
+    if (typeof caches === "undefined") return;
+    if (!(await caches.has(WEBLLM_MODEL_CACHE_SCOPE))) return;
+    const cache = await caches.open(WEBLLM_MODEL_CACHE_SCOPE);
+    const needle = `/${modelId}/`;
+    for (const request of await cache.keys()) {
+      if (request.url.includes(needle)) {
+        await cache.delete(request);
+      }
+    }
+  } catch {
+    // Best-effort only.
+  }
+}
 
 /** Raw Cache API reads only - must never import web-llm (the point is
  * answering readiness without pulling the library into the main path).
@@ -224,6 +247,33 @@ export type WebLlmDownloadResult =
   | { ok: true; model: ManifestModel }
   | { ok: false; code: "unsupported" | "no-model" | "no-storage" | "failed"; detail: string };
 
+/** One row of the model picker: the manifest entry plus everything the UI
+ * needs to render a Download / Use / Delete decision without touching the
+ * engine internals. */
+export interface WebLlmModelInfo {
+  id: string;
+  displayName: string;
+  detailName: string | null;
+  sizeBytes: number;
+  speedTier: "fast" | "capable" | null;
+  contextWindowSize: number | null;
+  /** Device meets the manifest floors (WebGPU present, buffer/memory ok). */
+  fits: boolean;
+  /** Weights present AND verified in this origin's Cache Storage. */
+  downloaded: boolean;
+  /** The auto-selection's pick for a simple turn on this device - the row
+   * the UI marks "recommended" and offers first. */
+  recommended: boolean;
+}
+
+export interface WebLlmModelList {
+  /** navigator.gpu adapter obtained - false means no row can ever download. */
+  webgpu: boolean;
+  models: WebLlmModelInfo[];
+  /** The stored override: "auto" | "hosted" | a model id. */
+  override: string;
+}
+
 /** The LocalEngine plus the explicit-gesture download surface engineHost
  * wires to the protocol's download messages. */
 export interface WebLlmLocalEngine extends LocalEngine {
@@ -231,6 +281,12 @@ export interface WebLlmLocalEngine extends LocalEngine {
    * omitted). MUST only be called from an explicit user gesture - never
    * prompts, never auto-runs, never rejects. */
   download(modelId?: string): Promise<WebLlmDownloadResult>;
+  /** Manifest tier-1 models annotated with fit/downloaded/recommended, so a
+   * picker can render before any download. Never rejects. */
+  listModels(): Promise<WebLlmModelList>;
+  /** Drop a model's cached weights (and unload it if it is the loaded one).
+   * Explicit gesture only. Never rejects. */
+  deleteModel(modelId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +388,10 @@ export function createWebLlmEngine(
    * block on it). A user-pinned model that isn't downloaded stays pinned -
    * never run a different model than the one the user chose. Never rejects.
    */
-  async function pickReadyModel(caps: EdgeCapabilities): Promise<ManifestModel | null> {
+  async function pickReadyModel(
+    caps: EdgeCapabilities,
+    useCase: ModelUseCase = "chat"
+  ): Promise<ManifestModel | null> {
     try {
       if (!caps.webgpu.available) return null;
       const manifest = await fetchManifest(host);
@@ -341,14 +400,26 @@ export function createWebLlmEngine(
       const selection = selectBestModel(
         { ...manifest, models: tier1Models },
         caps,
-        getStoredModelOverride(host)
+        getStoredModelOverride(host),
+        "simple",
+        useCase
       );
       if (selection.kind === "hosted") return null;
       if (selection.model && (await isModelReady(selection.model.id))) return selection.model;
       if (selection.source === "user") return null;
+      // Fall back over what is actually downloaded. A code turn still prefers
+      // a downloaded coder model over a bigger generalist; with none
+      // downloaded it takes the biggest fitting model rather than nothing.
       const fitting = tier1Models
         .filter((m) => modelFits(m, caps))
-        .sort((a, b) => b.sizeBytes - a.sizeBytes);
+        .sort((a, b) => {
+          if (useCase === "code") {
+            const aCode = a.useCases?.includes("code") ? 1 : 0;
+            const bCode = b.useCases?.includes("code") ? 1 : 0;
+            if (aCode !== bCode) return bCode - aCode;
+          }
+          return b.sizeBytes - a.sizeBytes;
+        });
       for (const candidate of fitting) {
         // Sequential on purpose: readiness is memoized per model, and
         // marker-less models answer false without touching the Cache API.
@@ -536,7 +607,7 @@ export function createWebLlmEngine(
       if (req.signal?.aborted) return failure("aborted");
       const caps = await detectCapabilities();
       if (!caps.webgpu.available) return failure("unsupported", "no WebGPU in this host");
-      const model = await pickReadyModel(caps);
+      const model = await pickReadyModel(caps, req.useCase ?? "chat");
       if (!model) return failure("unavailable", "no downloaded on-device model");
 
       let engine: MLCEngineInterface;
@@ -577,6 +648,7 @@ export function createWebLlmEngine(
         const messages = assembly.messages as ChatCompletionMessageParam[];
         const request: Record<string, unknown> = { stream: true, messages };
         if (req.maxTokens != null && req.maxTokens > 0) request.max_tokens = req.maxTokens;
+        if (req.includeUsage) request.stream_options = { include_usage: true };
         const remaining = () => TURN_CEILING_MS - (Date.now() - turnStartedAt);
         const startBudget = Math.max(1, Math.min(GENERATION_IDLE_TIMEOUT_MS, remaining()));
         const chunks = (await withDeadline(
@@ -596,6 +668,7 @@ export function createWebLlmEngine(
         };
 
         let full = "";
+        let completionTokens: number | null = null;
         const iterator = chunks[Symbol.asyncIterator]();
         for (;;) {
           if (req.signal?.aborted) {
@@ -624,6 +697,11 @@ export function createWebLlmEngine(
             return mapThrown(err, "generation-failed");
           }
           if (result.done) break;
+          // With include_usage the final chunk carries usage and no choices.
+          const reported = result.value.usage?.completion_tokens;
+          if (typeof reported === "number" && Number.isFinite(reported) && reported > 0) {
+            completionTokens = reported;
+          }
           const delta = result.value.choices?.[0]?.delta?.content;
           if (!delta) continue;
           full += delta;
@@ -640,7 +718,13 @@ export function createWebLlmEngine(
           return failure("aborted");
         }
         if (!full.trim()) return failure("empty-reply");
-        return { ok: true, text: full, modelId: model.id, backend: "webllm" };
+        return {
+          ok: true,
+          text: full,
+          modelId: model.id,
+          backend: "webllm",
+          ...(completionTokens != null ? { usage: { completionTokens } } : {}),
+        };
       } catch (err) {
         return mapThrown(err, "generation-failed");
       } finally {
@@ -713,6 +797,70 @@ export function createWebLlmEngine(
     }
   }
 
+  // --- model list / delete (picker surface) ---------------------------------
+
+  async function listModels(): Promise<WebLlmModelList> {
+    const override = getStoredModelOverride(host);
+    try {
+      const caps = await detectCapabilities();
+      const manifest = await fetchManifest(host);
+      const tier1Models = manifest.models.filter((m) => m.tier === 1);
+      const auto = caps.webgpu.available
+        ? selectBestModel({ ...manifest, models: tier1Models }, caps, "auto")
+        : null;
+      const recommendedId = auto?.kind === "model" ? auto.model?.id ?? null : null;
+      const models: WebLlmModelInfo[] = [];
+      for (const model of tier1Models) {
+        // Sequential on purpose - readiness is memoized per model and
+        // marker-less models answer without touching the Cache API.
+        const downloaded = await isModelReady(model.id);
+        models.push({
+          id: model.id,
+          displayName: model.displayName,
+          detailName: model.detailName ?? null,
+          sizeBytes: model.sizeBytes,
+          speedTier: model.speedTier ?? null,
+          contextWindowSize: model.contextWindowSize ?? null,
+          fits: modelFits(model, caps),
+          downloaded,
+          recommended: model.id === recommendedId,
+        });
+      }
+      // Downloaded first, then recommended, then smallest-first: the row a
+      // person can act on right now is always at the top.
+      models.sort((a, b) => {
+        if (a.downloaded !== b.downloaded) return a.downloaded ? -1 : 1;
+        if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
+        return a.sizeBytes - b.sizeBytes;
+      });
+      return { webgpu: caps.webgpu.available, models, override };
+    } catch {
+      return { webgpu: false, models: [], override };
+    }
+  }
+
+  async function deleteModel(modelId: string): Promise<void> {
+    try {
+      if (engineModelId === modelId && engineInstance && !engineInFlight) {
+        await waitForGenerationsIdle();
+        const instance = engineInstance;
+        engineInstance = null;
+        engineModelId = null;
+        try {
+          await instance.unload();
+        } catch {
+          // Best-effort.
+        }
+      }
+      await purgeModelWeights(host.kv, modelId);
+      weightPresence.delete(modelId);
+      // The next probe re-derives readiness from what is actually left.
+      pushStatus({ state: "idle", modelId: null, detail: "model deleted" });
+    } catch {
+      // Never rejects.
+    }
+  }
+
   // --- probe / status --------------------------------------------------------
 
   async function probe(): Promise<boolean> {
@@ -753,5 +901,7 @@ export function createWebLlmEngine(
     status: () => status,
     generate,
     download,
+    listModels,
+    deleteModel,
   };
 }
